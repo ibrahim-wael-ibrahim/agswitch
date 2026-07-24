@@ -1,13 +1,153 @@
 package doctor
 
-import("context";"errors";"fmt";"os";"os/exec";"path/filepath";"runtime";"strings";"github.com/ibrahim-wael/agswitch/internal/account";"github.com/ibrahim-wael/agswitch/internal/config";"github.com/ibrahim-wael/agswitch/internal/credentials";agsprocess "github.com/ibrahim-wael/agswitch/internal/process")
+import (
+	"context"
+	"errors"
+	"fmt"
+	"github.com/ibrahim-wael/agswitch/internal/account"
+	"github.com/ibrahim-wael/agswitch/internal/config"
+	"github.com/ibrahim-wael/agswitch/internal/credentials"
+	agsprocess "github.com/ibrahim-wael/agswitch/internal/process"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+)
+
 type Status string
-const(OK Status="OK";Warn Status="WARN";Fail Status="FAIL")
-type Check struct{Status Status;Name,Details string}
-type ActiveStore interface{Load(context.Context)(credentials.Credential,error)};type AccountRepository interface{List(context.Context)([]account.Account,error)};type ProcessManager interface{Running(context.Context)(bool,error)}
-type Service struct{Config config.Config;Active ActiveStore;Accounts AccountRepository;Process ProcessManager}
-func(s Service)Run(ctx context.Context)[]Check{c:=[]Check{};if runtime.GOOS=="linux"{c=append(c,Check{OK,"Operating system",runtime.GOOS})}else{c=append(c,Check{Fail,"Operating system","Linux required"})};for _,x:=range []string{"pgrep","secret-tool","busctl"}{if p,e:=exec.LookPath(x);e==nil{c=append(c,Check{OK,x+" installed",p})}else{c=append(c,Check{Warn,x+" installed","not found"})}};c=append(c,checkDir("Config directory",s.Config.BaseDir),checkDir("State directory",s.Config.StateDir),checkPrivateFile("Account metadata",s.Config.AccountsPath),checkExecutable(s.Config.AppPath));if os.Getenv("DBUS_SESSION_BUS_ADDRESS")==""{c=append(c,Check{Warn,"D-Bus session","not set"})}else{c=append(c,Check{OK,"D-Bus session","available"})};if a,e:=agsprocess.DBusTrayAvailable(ctx);e!=nil{c=append(c,Check{Warn,"Tray D-Bus services",e.Error()})}else if a{c=append(c,Check{OK,"Tray D-Bus services","detected"})}else{c=append(c,Check{Warn,"Tray D-Bus services","not detected"})};if s.Active!=nil{if v,e:=s.Active.Load(ctx);e==nil{d:="credential found";if v.Email!=""{d=v.Email};c=append(c,Check{OK,"Active credential",d})}else if errors.Is(e,credentials.ErrNotFound){c=append(c,Check{Warn,"Active credential","not found"})}else{c=append(c,Check{Fail,"Active credential",e.Error()})}};if s.Accounts!=nil{if a,e:=s.Accounts.List(ctx);e==nil{c=append(c,Check{OK,"Saved profiles",fmt.Sprintf("%d profile(s)",len(a))})}else{c=append(c,Check{Fail,"Saved profiles",e.Error()})}};if s.Process!=nil{if r,e:=s.Process.Running(ctx);e!=nil{c=append(c,Check{Fail,"Antigravity process",e.Error()})}else if r{c=append(c,Check{OK,"Antigravity process","running"})}else{c=append(c,Check{Warn,"Antigravity process","stopped"})}};return c}
-func HasFailures(c []Check)bool{for _,v:=range c{if v.Status==Fail{return true}};return false}
-func checkDir(n,p string)Check{i,e:=os.Stat(p);if errors.Is(e,os.ErrNotExist){return Check{Warn,n,"will be created: "+p}};if e!=nil{return Check{Fail,n,e.Error()}};if !i.IsDir(){return Check{Fail,n,"not a directory"}};if i.Mode().Perm()&077!=0{return Check{Warn,n,fmt.Sprintf("permissions are %o; expected 700",i.Mode().Perm())}};return Check{OK,n,p}}
-func checkPrivateFile(n,p string)Check{i,e:=os.Stat(p);if errors.Is(e,os.ErrNotExist){return Check{Warn,n,"not created yet"}};if e!=nil{return Check{Fail,n,e.Error()}};if i.IsDir(){return Check{Fail,n,"is a directory"}};if i.Mode().Perm()&077!=0{return Check{Warn,n,fmt.Sprintf("permissions are %o; expected 600",i.Mode().Perm())}};return Check{OK,n,filepath.Clean(p)}}
-func checkExecutable(p string)Check{i,e:=os.Stat(p);if e!=nil{return Check{Fail,"Antigravity executable",e.Error()}};if i.IsDir()||i.Mode().Perm()&0111==0{return Check{Fail,"Antigravity executable","not executable: "+p}};return Check{OK,"Antigravity executable",strings.TrimSpace(p)}}
+
+const (
+	OK   Status = "OK"
+	Warn Status = "WARN"
+	Fail Status = "FAIL"
+)
+
+type Check struct {
+	Status        Status
+	Name, Details string
+}
+type ActiveStore interface {
+	Load(context.Context) (credentials.Credential, error)
+}
+type AccountRepository interface {
+	List(context.Context) ([]account.Account, error)
+}
+type ProcessManager interface {
+	Running(context.Context) (bool, error)
+}
+type Service struct {
+	Config   config.Config
+	Active   ActiveStore
+	Accounts AccountRepository
+	Process  ProcessManager
+}
+
+func (s Service) Run(ctx context.Context) []Check {
+	c := []Check{}
+	if runtime.GOOS == "linux" {
+		c = append(c, Check{OK, "Operating system", runtime.GOOS})
+	} else {
+		c = append(c, Check{Fail, "Operating system", "Linux required"})
+	}
+	for _, x := range []string{"pgrep", "secret-tool", "busctl"} {
+		if p, e := exec.LookPath(x); e == nil {
+			c = append(c, Check{OK, x + " installed", p})
+		} else {
+			c = append(c, Check{Warn, x + " installed", "not found"})
+		}
+	}
+	c = append(c, checkDir("Config directory", s.Config.BaseDir), checkDir("State directory", s.Config.StateDir), checkPrivateFile("Account metadata", s.Config.AccountsPath), checkExecutable(s.Config.AppPath))
+	if os.Getenv("DBUS_SESSION_BUS_ADDRESS") == "" {
+		c = append(c, Check{Warn, "D-Bus session", "not set"})
+	} else {
+		c = append(c, Check{OK, "D-Bus session", "available"})
+	}
+	if a, e := agsprocess.DBusTrayAvailable(ctx); e != nil {
+		c = append(c, Check{Warn, "Tray D-Bus services", e.Error()})
+	} else if a {
+		c = append(c, Check{OK, "Tray D-Bus services", "detected"})
+	} else {
+		c = append(c, Check{Warn, "Tray D-Bus services", "not detected"})
+	}
+	if s.Active != nil {
+		if v, e := s.Active.Load(ctx); e == nil {
+			d := "credential found"
+			if v.Email != "" {
+				d = v.Email
+			}
+			c = append(c, Check{OK, "Active credential", d})
+		} else if errors.Is(e, credentials.ErrNotFound) {
+			c = append(c, Check{Warn, "Active credential", "not found"})
+		} else {
+			c = append(c, Check{Fail, "Active credential", e.Error()})
+		}
+	}
+	if s.Accounts != nil {
+		if a, e := s.Accounts.List(ctx); e == nil {
+			c = append(c, Check{OK, "Saved profiles", fmt.Sprintf("%d profile(s)", len(a))})
+		} else {
+			c = append(c, Check{Fail, "Saved profiles", e.Error()})
+		}
+	}
+	if s.Process != nil {
+		if r, e := s.Process.Running(ctx); e != nil {
+			c = append(c, Check{Fail, "Antigravity process", e.Error()})
+		} else if r {
+			c = append(c, Check{OK, "Antigravity process", "running"})
+		} else {
+			c = append(c, Check{Warn, "Antigravity process", "stopped"})
+		}
+	}
+	return c
+}
+func HasFailures(c []Check) bool {
+	for _, v := range c {
+		if v.Status == Fail {
+			return true
+		}
+	}
+	return false
+}
+func checkDir(n, p string) Check {
+	i, e := os.Stat(p)
+	if errors.Is(e, os.ErrNotExist) {
+		return Check{Warn, n, "will be created: " + p}
+	}
+	if e != nil {
+		return Check{Fail, n, e.Error()}
+	}
+	if !i.IsDir() {
+		return Check{Fail, n, "not a directory"}
+	}
+	if i.Mode().Perm()&077 != 0 {
+		return Check{Warn, n, fmt.Sprintf("permissions are %o; expected 700", i.Mode().Perm())}
+	}
+	return Check{OK, n, p}
+}
+func checkPrivateFile(n, p string) Check {
+	i, e := os.Stat(p)
+	if errors.Is(e, os.ErrNotExist) {
+		return Check{Warn, n, "not created yet"}
+	}
+	if e != nil {
+		return Check{Fail, n, e.Error()}
+	}
+	if i.IsDir() {
+		return Check{Fail, n, "is a directory"}
+	}
+	if i.Mode().Perm()&077 != 0 {
+		return Check{Warn, n, fmt.Sprintf("permissions are %o; expected 600", i.Mode().Perm())}
+	}
+	return Check{OK, n, filepath.Clean(p)}
+}
+func checkExecutable(p string) Check {
+	i, e := os.Stat(p)
+	if e != nil {
+		return Check{Fail, "Antigravity executable", e.Error()}
+	}
+	if i.IsDir() || i.Mode().Perm()&0111 == 0 {
+		return Check{Fail, "Antigravity executable", "not executable: " + p}
+	}
+	return Check{OK, "Antigravity executable", strings.TrimSpace(p)}
+}

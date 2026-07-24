@@ -1,2 +1,6 @@
 package tui
-const(KeyQuit="q";KeySelect="enter")
+
+const (
+	KeyQuit   = "q"
+	KeySelect = "enter"
+)

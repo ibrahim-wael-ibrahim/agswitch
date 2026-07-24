@@ -1,3 +1,31 @@
 package cmd
-import("fmt";"github.com/ibrahim-wael/agswitch/internal/switcher";"github.com/spf13/cobra")
-func newUseCommand(d *dependencies)*cobra.Command{var restart,no bool;c:=&cobra.Command{Use:"use <profile>",Short:"Switch transactionally",Args:cobra.ExactArgs(1),RunE:func(c *cobra.Command,a []string)error{if restart&&no{return fmt.Errorf("--restart and --no-start cannot be used together")};m:=switcher.PreserveLaunchState;if restart{m=switcher.AlwaysLaunch};if no{m=switcher.NeverLaunch};if e:=d.app.Use(c.Context(),a[0],switcher.Options{LaunchMode:m});e!=nil{return e};_,e:=fmt.Fprintf(c.OutOrStdout(),"Done: %s\n",a[0]);return e}};c.Flags().BoolVar(&restart,"restart",false,"always launch");c.Flags().BoolVar(&no,"no-start",false,"leave stopped");return c}
+
+import (
+	"fmt"
+	"github.com/ibrahim-wael/agswitch/internal/switcher"
+	"github.com/spf13/cobra"
+)
+
+func newUseCommand(d *dependencies) *cobra.Command {
+	var restart, no bool
+	c := &cobra.Command{Use: "use <profile>", Short: "Switch transactionally", Args: cobra.ExactArgs(1), RunE: func(c *cobra.Command, a []string) error {
+		if restart && no {
+			return fmt.Errorf("--restart and --no-start cannot be used together")
+		}
+		m := switcher.PreserveLaunchState
+		if restart {
+			m = switcher.AlwaysLaunch
+		}
+		if no {
+			m = switcher.NeverLaunch
+		}
+		if e := d.app.Use(c.Context(), a[0], switcher.Options{LaunchMode: m}); e != nil {
+			return e
+		}
+		_, e := fmt.Fprintf(c.OutOrStdout(), "Done: %s\n", a[0])
+		return e
+	}}
+	c.Flags().BoolVar(&restart, "restart", false, "always launch")
+	c.Flags().BoolVar(&no, "no-start", false, "leave stopped")
+	return c
+}

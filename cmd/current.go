@@ -1,3 +1,32 @@
 package cmd
-import("encoding/json";"fmt";"github.com/spf13/cobra")
-func newCurrentCommand(d *dependencies)*cobra.Command{var j,q bool;c:=&cobra.Command{Use:"current",Short:"Detect the active profile by credential fingerprint",Args:cobra.NoArgs,RunE:func(c *cobra.Command,_ []string)error{v,ok,e:=d.app.Current(c.Context());if e!=nil{return e};if j{return json.NewEncoder(c.OutOrStdout()).Encode(map[string]any{"profile":v.ID,"email":v.Email,"matched":ok})};if !ok{if q{return nil};_,e=fmt.Fprintln(c.OutOrStdout(),"unknown");return e};_,e=fmt.Fprintln(c.OutOrStdout(),v.ID);return e}};c.Flags().BoolVar(&j,"json",false,"print JSON");c.Flags().BoolVarP(&q,"quiet","q",false,"quiet");return c}
+
+import (
+	"encoding/json"
+	"fmt"
+	"github.com/spf13/cobra"
+)
+
+func newCurrentCommand(d *dependencies) *cobra.Command {
+	var j, q bool
+	c := &cobra.Command{Use: "current", Short: "Detect the active profile by credential fingerprint", Args: cobra.NoArgs, RunE: func(c *cobra.Command, _ []string) error {
+		v, ok, e := d.app.Current(c.Context())
+		if e != nil {
+			return e
+		}
+		if j {
+			return json.NewEncoder(c.OutOrStdout()).Encode(map[string]any{"profile": v.ID, "email": v.Email, "matched": ok})
+		}
+		if !ok {
+			if q {
+				return nil
+			}
+			_, e = fmt.Fprintln(c.OutOrStdout(), "unknown")
+			return e
+		}
+		_, e = fmt.Fprintln(c.OutOrStdout(), v.ID)
+		return e
+	}}
+	c.Flags().BoolVar(&j, "json", false, "print JSON")
+	c.Flags().BoolVarP(&q, "quiet", "q", false, "quiet")
+	return c
+}

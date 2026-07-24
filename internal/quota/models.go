@@ -10,10 +10,10 @@ type ModelUsage struct {
 }
 
 type Snapshot struct {
-	Email            string                 `json:"email"`
-	SubscriptionTier  string                 `json:"subscription_tier"`
-	Models            map[string]ModelUsage  `json:"models"`
-	FetchedAt         time.Time              `json:"fetched_at"`
-	Source            string                 `json:"source,omitempty"`
-	Metadata          map[string]string      `json:"metadata,omitempty"`
+	Email            string                `json:"email"`
+	SubscriptionTier string                `json:"subscription_tier"`
+	Models           map[string]ModelUsage `json:"models"`
+	FetchedAt        time.Time             `json:"fetched_at"`
+	Source           string                `json:"source,omitempty"`
+	Metadata         map[string]string     `json:"metadata,omitempty"`
 }
