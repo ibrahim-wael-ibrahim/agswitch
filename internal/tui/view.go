@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -30,11 +31,13 @@ func (m Model) View() tea.View {
 	contentWidth := max(40, width-2)
 
 	var output strings.Builder
-	output.WriteString(renderHeader(contentWidth, m.Options.Version, m.Status, m.Busy))
+	output.WriteString(renderHeader(contentWidth, m))
 	output.WriteByte('\n')
 
-	topHeight := max(10, min(16, height/2-2))
-	if contentWidth >= 84 {
+	commandHeight := min(max(len(dashboardCommands)+2, 8), 13)
+	accountHeight := min(max(len(m.filteredAccounts())+3, 8), 13)
+	topHeight := max(commandHeight, accountHeight)
+	if contentWidth >= 92 {
 		leftWidth := contentWidth/2 - 1
 		rightWidth := contentWidth - leftWidth - 1
 		output.WriteString(joinColumns(
@@ -44,46 +47,69 @@ func (m Model) View() tea.View {
 			rightWidth,
 		))
 	} else {
-		output.WriteString(renderCommandPanel(m, contentWidth, min(12, topHeight)))
+		output.WriteString(renderCommandPanel(m, contentWidth, commandHeight))
 		output.WriteByte('\n')
-		output.WriteString(renderAccountPanel(m, contentWidth, min(12, topHeight)))
+		output.WriteString(renderAccountPanel(m, contentWidth, accountHeight))
+		topHeight = commandHeight + accountHeight + 1
 	}
 
 	output.WriteByte('\n')
-	output.WriteString(renderQuotaPanel(m, contentWidth, max(8, height-topHeight-8)))
+	reserved := topHeight + 7
+	if strings.TrimSpace(m.Details) != "" {
+		reserved += 7
+	}
+	quotaHeight := max(7, height-reserved)
+	output.WriteString(renderQuotaPanel(m, contentWidth, quotaHeight))
 	if strings.TrimSpace(m.Details) != "" {
 		output.WriteByte('\n')
-		output.WriteString(renderBox("Details", truncateLines(m.Details, 6, contentWidth-4), contentWidth, 8, false))
+		output.WriteString(renderBox("Details", truncateLines(m.Details, 5, contentWidth-4), contentWidth, 7, false))
 	}
 	output.WriteByte('\n')
-	output.WriteString(dim + "Tab/←/→ panels  ↑/↓ move  Enter select/run  / search  r refresh  a auto  p previous  d doctor  q quit" + reset)
+	output.WriteString(renderHelp(m, contentWidth))
 	return tea.NewView(output.String())
 }
 
-func renderHeader(width int, version, status string, busy bool) string {
-	if version == "" {
-		version = "dev"
+func renderHeader(width int, m Model) string {
+	version := brand.VersionLabel(m.Options.Version)
+	refresh := "manual"
+	if m.Options.AutoRefresh > 0 {
+		refresh = fmt.Sprintf("every %s", compactDuration(m.Options.AutoRefresh))
 	}
-	spinner := ""
-	if busy {
-		spinner = "  [working]"
+	busy := ""
+	if m.Busy {
+		busy = " · working"
 	}
-	line1 := bold + "AGSwitch" + reset + "  v" + version + "  " + dim + "by " + brand.Author + " · " + brand.Repository + reset
-	line2 := "Status: " + status + spinner
-	return padRight(line1, width) + "\n" + padRight(line2, width)
+	line1 := bold + "AGSwitch " + version + reset + "  " + dim + "by " + brand.Author + " · " + brand.Repository + reset
+	line2 := fmt.Sprintf("%sStatus:%s %s%s  %sAuto refresh:%s %s  %sThreshold:%s %d%%",
+		bold, reset, sanitizeTerminalText(m.Status), busy,
+		bold, reset, refresh,
+		bold, reset, m.Options.AutoThreshold,
+	)
+	if m.EditingRefresh {
+		line2 = fmt.Sprintf("%sAuto refresh seconds:%s %s_  %s(0 disables · Enter save · Esc cancel)%s",
+			bold, reset, m.RefreshInput, dim, reset)
+	}
+	return trimWidth(line1, width) + "\n" + trimWidth(line2, width)
 }
 
 func renderCommandPanel(m Model, width, height int) string {
-	lines := []string{}
+	lines := make([]string, 0, len(dashboardCommands))
 	for index, command := range dashboardCommands {
-		prefix := "  "
-		line := fmt.Sprintf("%s%-18s %s", prefix, command.Label, command.Description)
+		description := command.Description
+		if command.Action == actionAutoRefresh {
+			if m.Options.AutoRefresh <= 0 {
+				description = "Disabled · Enter seconds or 0"
+			} else {
+				description = "Every " + compactDuration(m.Options.AutoRefresh) + " · Enter to change"
+			}
+		}
+		line := fmt.Sprintf("  %-17s %s", command.Label, description)
 		if m.Focus == focusCommands && index == m.SelectedCommand {
 			line = reverse + trimWidth(line, width-4) + reset
 		}
 		lines = append(lines, line)
 	}
-	return renderBox("Program & Commands", strings.Join(lines, "\n"), width, height, m.Focus == focusCommands)
+	return renderBox("Program & Commands", strings.Join(lines, "\n"), width, height, m.Focus == focusCommands || m.Focus == focusRefreshInput)
 }
 
 func renderAccountPanel(m Model, width, height int) string {
@@ -100,7 +126,7 @@ func renderAccountPanel(m Model, width, height int) string {
 	for index, item := range items {
 		active := " "
 		if item.Active {
-			active = "*"
+			active = "●"
 		}
 		score := "unknown"
 		if remaining, ok := quota.MinimumKnownRemaining(m.resultFor(item.ID).Snapshot); ok {
@@ -108,9 +134,15 @@ func renderAccountPanel(m Model, width, height int) string {
 		}
 		recommended := ""
 		if m.Decision.Selected.Profile == item.ID {
-			recommended = " auto"
+			recommended = " · best"
 		}
-		text := fmt.Sprintf("%s %-18s %-24s %7s%s", active, item.ID, item.Email, score, recommended)
+		email := item.Email
+		if strings.TrimSpace(email) == "" || email == item.ID {
+			email = ""
+		}
+		available := max(8, width-20)
+		identity := strings.TrimSpace(item.ID + "  " + email)
+		text := fmt.Sprintf("%s %-*s %7s%s", active, available, trimWidth(identity, available), score, recommended)
 		if m.Focus == focusAccounts && index == m.SelectedAccount {
 			text = reverse + trimWidth(text, width-4) + reset
 		}
@@ -136,7 +168,7 @@ func renderQuotaPanel(m Model, width, height int) string {
 	now := time.Now()
 	for _, model := range models {
 		remaining := "unknown"
-		bar := "[??????????]"
+		bar := "[··········]"
 		if model.Remaining >= 0 {
 			remaining = fmt.Sprintf("%3d%%", model.Remaining)
 			bar = compactBar(model.Remaining, 10)
@@ -149,7 +181,7 @@ func renderQuotaPanel(m Model, width, height int) string {
 		if duration := quota.ResetIn(model.ResetAt, now); duration > 0 {
 			resetText = " · " + compactDuration(duration)
 		}
-		entries = append(entries, fmt.Sprintf("%-31s %s %s%s%s", trimWidth(model.Name, 31), bar, remaining, variants, resetText))
+		entries = append(entries, fmt.Sprintf("%-30s %s %s%s%s", trimWidth(model.Name, 30), bar, remaining, variants, resetText))
 	}
 	body := renderGrid(entries, width-4)
 	title := fmt.Sprintf("Model Quota · %s · %s", profile, result.Snapshot.Source)
@@ -157,7 +189,7 @@ func renderQuotaPanel(m Model, width, height int) string {
 }
 
 func renderGrid(entries []string, width int) string {
-	if width < 84 {
+	if width < 100 {
 		return strings.Join(entries, "\n")
 	}
 	columnWidth := width/2 - 1
@@ -174,18 +206,28 @@ func renderGrid(entries []string, width int) string {
 	return strings.Join(lines, "\n")
 }
 
+func renderHelp(m Model, width int) string {
+	text := "Tab panels  ↑/↓ move  Enter select/run  / search  r refresh  R auto-refresh  a auto-switch  p previous  d doctor  q quit"
+	if m.EditingRefresh {
+		text = "Type seconds · 0 disables · Enter save · Esc cancel"
+	} else if m.Searching {
+		text = "Type to search · Enter apply · Ctrl-U clear · Esc cancel"
+	}
+	return dim + trimWidth(text, width) + reset
+}
+
 func renderBox(title, body string, width, height int, focused bool) string {
 	if width < 10 {
 		return body
 	}
 	marker := ""
 	if focused {
-		marker = "* "
+		marker = "● "
 	}
-	title = marker + title
+	title = marker + sanitizeTerminalText(title)
 	top := "┌─ " + trimWidth(title, width-6) + " " + strings.Repeat("─", max(0, width-visibleWidth(title)-5)) + "┐"
 	bottom := "└" + strings.Repeat("─", max(0, width-2)) + "┘"
-	bodyLines := strings.Split(body, "\n")
+	bodyLines := strings.Split(sanitizeTerminalText(body), "\n")
 	maxBody := max(1, height-2)
 	if len(bodyLines) > maxBody {
 		bodyLines = bodyLines[:maxBody]
@@ -222,13 +264,13 @@ func joinColumns(left, right string, leftWidth, rightWidth int) string {
 
 func compactBar(value, width int) string {
 	if value < 0 {
-		return "[" + strings.Repeat("?", width) + "]"
+		return "[" + strings.Repeat("·", width) + "]"
 	}
 	if value > 100 {
 		value = 100
 	}
 	filled := value * width / 100
-	return "[" + strings.Repeat("#", filled) + strings.Repeat("-", width-filled) + "]"
+	return "[" + strings.Repeat("█", filled) + strings.Repeat("░", width-filled) + "]"
 }
 
 func compactDuration(value time.Duration) string {
@@ -242,7 +284,10 @@ func compactDuration(value time.Duration) string {
 		}
 		return fmt.Sprintf("%dh %dm", int(value/time.Hour), minutes)
 	}
-	return fmt.Sprintf("%dm", max(1, int(value/time.Minute)))
+	if value >= time.Minute {
+		return fmt.Sprintf("%dm", max(1, int(value/time.Minute)))
+	}
+	return fmt.Sprintf("%ds", max(1, int(value/time.Second)))
 }
 
 func truncateLines(value string, maxLines, width int) string {
@@ -260,9 +305,9 @@ func trimWidth(value string, width int) string {
 	if width <= 0 {
 		return ""
 	}
-	plain := stripANSI(value)
+	plain := stripANSI(sanitizeTerminalText(value))
 	if len([]rune(plain)) <= width {
-		return value
+		return sanitizeTerminalText(value)
 	}
 	runes := []rune(plain)
 	if width == 1 {
@@ -272,6 +317,7 @@ func trimWidth(value string, width int) string {
 }
 
 func padRight(value string, width int) string {
+	value = sanitizeTerminalText(value)
 	missing := width - visibleWidth(value)
 	if missing <= 0 {
 		return value
@@ -280,7 +326,22 @@ func padRight(value string, width int) string {
 }
 
 func visibleWidth(value string) int {
-	return len([]rune(stripANSI(value)))
+	return len([]rune(stripANSI(sanitizeTerminalText(value))))
+}
+
+func sanitizeTerminalText(value string) string {
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case '\t':
+			return ' '
+		case '\r':
+			return -1
+		}
+		if r == '\n' || r == '\033' || !unicode.IsControl(r) {
+			return r
+		}
+		return -1
+	}, value)
 }
 
 func stripANSI(value string) string {
