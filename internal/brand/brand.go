@@ -44,7 +44,7 @@ func VersionLabel(version string) string {
 }
 
 func Banner(version string) string {
-	return fmt.Sprintf("%s%s%s%s\n%s%s %s%s  %sby %s · %s%s\n",
+	return fmt.Sprintf("%s%s%s\n%s%s %s%s  %sby %s · %s%s\n",
 		Bold, ASCII, Reset,
 		Bold, Name, VersionLabel(version), Reset,
 		Muted, Author, Repository, Reset,
