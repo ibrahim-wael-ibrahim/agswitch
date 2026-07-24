@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
@@ -133,7 +134,7 @@ func (m Model) updateRefreshInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.Status = "Enter a whole number of seconds, or 0 to disable"
 			return m, nil
 		}
-		m.Options.AutoRefresh = timeDurationSeconds(seconds)
+		m.Options.AutoRefresh = time.Duration(seconds) * time.Second
 		m.RefreshSequence++
 		m.EditingRefresh = false
 		m.Focus = focusCommands
@@ -160,10 +161,6 @@ func (m Model) updateRefreshInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.RefreshInput += text
 	}
 	return m, nil
-}
-
-func timeDurationSeconds(seconds int) time.Duration {
-	return time.Duration(seconds) * time.Second
 }
 
 func (m Model) beginRefreshInput() (tea.Model, tea.Cmd) {
