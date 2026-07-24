@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/ibrahim-wael/agswitch/internal/account"
 	"github.com/ibrahim-wael/agswitch/internal/credentials"
@@ -17,7 +18,44 @@ type ProfileInfo struct {
 }
 
 func (s *Service) Update(ctx context.Context, name string) error {
-	return s.Save(ctx, name, true)
+	if err := profile.Validate(name); err != nil {
+		return err
+	}
+	if s.Active == nil {
+		return errors.New("active credential store is not configured")
+	}
+
+	const timeout = 20 * time.Second
+	const pollInterval = 500 * time.Millisecond
+	const expirySkew = time.Minute
+
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	var lastStatus credentials.TokenStatus
+	for {
+		credential, err := s.Active.Load(ctx)
+		if err != nil {
+			return fmt.Errorf("read active Antigravity credential: %w", err)
+		}
+		lastStatus = credentials.InspectToken(credential.Raw)
+		if lastStatus.Fresh(s.now(), expirySkew) {
+			return s.saveCredential(ctx, name, credential, true)
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			if lastStatus.ExpiryKnown {
+				return fmt.Errorf("active access token did not refresh before timeout; last expiry was %s", lastStatus.Expiry.Format(time.RFC3339))
+			}
+			return errors.New("active access token did not become usable before timeout")
+		case <-ticker.C:
+		}
+	}
 }
 
 func (s *Service) Info(ctx context.Context, name string) (ProfileInfo, error) {
