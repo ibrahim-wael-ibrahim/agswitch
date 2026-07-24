@@ -109,13 +109,14 @@ fetch_asset() {
 install_desktop_files() {
   [[ "$OS" == linux ]] || return 0
 
-  local app_dir icon_dir desktop_source icon_source desktop_target binary
+  local app_dir icon_dir desktop_source icon_source launcher_source desktop_target launcher_target
   app_dir="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
   icon_dir="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps"
   desktop_source="$TMP/agswitch.desktop"
   icon_source="$TMP/agswitch.svg"
+  launcher_source="$TMP/agswitch-desktop"
   desktop_target="$app_dir/agswitch.desktop"
-  binary="$BINDIR/agswitch"
+  launcher_target="$BINDIR/agswitch-desktop"
 
   if ! fetch_asset "packaging/agswitch.desktop" "$desktop_source"; then
     warn "Could not download the desktop launcher"
@@ -125,9 +126,14 @@ install_desktop_files() {
     warn "Could not download the desktop icon"
     return 0
   fi
+  if ! fetch_asset "scripts/agswitch-desktop" "$launcher_source"; then
+    warn "Could not download the terminal launcher"
+    return 0
+  fi
 
-  mkdir -p "$app_dir" "$icon_dir"
-  sed "s|^Exec=.*|Exec=$binary tui --stay|" "$desktop_source" > "$desktop_target"
+  mkdir -p "$app_dir" "$icon_dir" "$BINDIR"
+  install -m 0755 "$launcher_source" "$launcher_target"
+  sed "s|^Exec=.*|Exec=$launcher_target|" "$desktop_source" > "$desktop_target"
   install -m 0644 "$icon_source" "$icon_dir/agswitch.svg"
   chmod 0644 "$desktop_target"
 
@@ -140,12 +146,50 @@ install_desktop_files() {
   log "Installed desktop launcher: $desktop_target"
 }
 
+hyprland_installed() {
+  has Hyprland || has hyprctl || [[ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]] || [[ -d "$HOME/.config/hypr" ]]
+}
+
+install_hyprland_integration() {
+  [[ "$OS" == linux ]] || return 0
+  hyprland_installed || return 0
+
+  local hypr_dir main_config app_config source_line launcher
+  hypr_dir="${XDG_CONFIG_HOME:-$HOME/.config}/hypr"
+  main_config="$hypr_dir/hyprland.conf"
+  app_config="$hypr_dir/agswitch.conf"
+  launcher="$BINDIR/agswitch-desktop"
+  source_line="source = $app_config"
+
+  mkdir -p "$hypr_dir"
+  cat > "$app_config" <<EOF
+# Managed by AGSwitch installer.
+# Super + Ctrl + Shift + A opens the floating dashboard.
+windowrulev2 = float, class:^(agswitch)$
+windowrulev2 = center, class:^(agswitch)$
+windowrulev2 = size 82% 82%, class:^(agswitch)$
+bind = SUPER CTRL SHIFT, A, exec, $launcher
+EOF
+
+  touch "$main_config"
+  if ! grep -Fqx "$source_line" "$main_config"; then
+    printf '\n# AGSwitch integration\n%s\n' "$source_line" >> "$main_config"
+  fi
+
+  if has hyprctl && [[ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]]; then
+    hyprctl reload >/dev/null 2>&1 || warn "Hyprland config was installed but could not be reloaded automatically"
+  fi
+  log "Installed Hyprland shortcut: SUPER+CTRL+SHIFT+A"
+  log "Installed Hyprland rules: $app_config"
+}
+
 if ! install_release; then
   warn "No compatible release binary was available; falling back to source build."
   build_from_source
 fi
 
 install_desktop_files
+install_hyprland_integration
 
 case ":$PATH:" in
   *":$BINDIR:"*) ;;
