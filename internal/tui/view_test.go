@@ -5,8 +5,6 @@ import (
 	"testing"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
-
 	"github.com/ibrahim-wael/agswitch/internal/account"
 )
 
@@ -60,17 +58,18 @@ func TestViewUsesAlternateScreen(t *testing.T) {
 	}
 }
 
-func TestAutoSwitchOperationDoesNotQuitDashboard(t *testing.T) {
+func TestAutoSwitchOperationKeepsDashboardActive(t *testing.T) {
 	model := Model{Options: Options{ExitAfterSwitch: true}}
 	updated, command := model.Update(operationMsg{action: actionAutoSwitch, profile: "work"})
 	if command == nil {
 		t.Fatal("auto-switch completion should reload dashboard data")
 	}
-	if _, ok := updated.(Model); !ok {
+	updatedModel, ok := updated.(Model)
+	if !ok {
 		t.Fatalf("unexpected updated model type %T", updated)
 	}
-	if command == tea.Quit {
-		t.Fatal("auto-switch should not quit the dashboard")
+	if !updatedModel.Busy {
+		t.Fatal("auto-switch completion should keep the dashboard active while data reloads")
 	}
 }
 
