@@ -4,6 +4,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	tea "charm.land/bubbletea/v2"
+
+	"github.com/ibrahim-wael/agswitch/internal/account"
 )
 
 func TestSanitizeTerminalTextRemovesTabsAndControls(t *testing.T) {
@@ -15,7 +19,7 @@ func TestSanitizeTerminalTextRemovesTabsAndControls(t *testing.T) {
 }
 
 func TestRenderHeaderNormalizesVersionAndShowsRefresh(t *testing.T) {
-	t.Parallel()
+	t.Setenv("NO_COLOR", "1")
 	model := Model{
 		Options: Options{
 			Version:       "vv1.0.0",
@@ -25,13 +29,48 @@ func TestRenderHeaderNormalizesVersionAndShowsRefresh(t *testing.T) {
 		Status: "Ready",
 	}
 	header := stripANSI(renderHeader(160, model))
-	for _, expected := range []string{"AGSwitch v1.0.0", "Auto refresh: every 30s", "Threshold: 25%"} {
+	for _, expected := range []string{"AGSwitch v1.0.0", "Refresh: every 30s", "Auto switch: 25%"} {
 		if !strings.Contains(header, expected) {
 			t.Fatalf("header does not contain %q: %q", expected, header)
 		}
 	}
 	if strings.Contains(header, "vv1.0.0") {
 		t.Fatalf("header contains duplicate version prefix: %q", header)
+	}
+}
+
+func TestAccountPanelShowsEmailOnOwnLine(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	model := Model{
+		Accounts: []account.Account{{ID: "work", Email: "ibrahim@example.com", Active: true}},
+		Focus:    focusAccounts,
+	}
+	panel := stripANSI(renderAccountPanel(model, 70, 7))
+	if !strings.Contains(panel, "ibrahim@example.com") {
+		t.Fatalf("account panel omitted email: %q", panel)
+	}
+}
+
+func TestViewUsesAlternateScreen(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	model := Model{Width: 100, Height: 30, Status: "Ready"}
+	view := model.View()
+	if !view.AltScreen {
+		t.Fatal("dashboard should use the alternate screen buffer")
+	}
+}
+
+func TestAutoSwitchOperationDoesNotQuitDashboard(t *testing.T) {
+	model := Model{Options: Options{ExitAfterSwitch: true}}
+	updated, command := model.Update(operationMsg{action: actionAutoSwitch, profile: "work"})
+	if command == nil {
+		t.Fatal("auto-switch completion should reload dashboard data")
+	}
+	if _, ok := updated.(Model); !ok {
+		t.Fatalf("unexpected updated model type %T", updated)
+	}
+	if command == tea.Quit {
+		t.Fatal("auto-switch should not quit the dashboard")
 	}
 }
 
@@ -51,10 +90,10 @@ func TestRenderGridUsesOneColumnOnNarrowTerminals(t *testing.T) {
 func TestCompactDurationSupportsSecondsAndHours(t *testing.T) {
 	t.Parallel()
 	cases := map[time.Duration]string{
-		30 * time.Second:          "30s",
-		5 * time.Minute:           "5m",
+		30 * time.Second:             "30s",
+		5 * time.Minute:              "5m",
 		5*time.Hour + 12*time.Minute: "5h 12m",
-		26 * time.Hour:            "1d 2h",
+		26 * time.Hour:               "1d 2h",
 	}
 	for input, expected := range cases {
 		if actual := compactDuration(input); actual != expected {
