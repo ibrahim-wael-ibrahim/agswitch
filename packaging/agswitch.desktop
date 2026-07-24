@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=AGSwitch
+GenericName=Antigravity Account Switcher
+Comment=Switch Antigravity accounts and inspect model quota
+Exec=agswitch tui --stay
+Icon=agswitch
+Terminal=true
+Categories=Utility;System;
+Keywords=Antigravity;Google;Account;Quota;Terminal;
+StartupNotify=false
