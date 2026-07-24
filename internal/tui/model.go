@@ -39,6 +39,7 @@ const (
 	focusAccounts
 	focusSearch
 	focusRefreshInput
+	focusThresholdInput
 )
 
 type action string
@@ -50,6 +51,7 @@ const (
 	actionRefresh      action = "refresh"
 	actionAutoRefresh  action = "auto-refresh"
 	actionAutoSwitch   action = "auto-switch"
+	actionAutoThreshold action = "auto-threshold"
 	actionPrevious     action = "previous"
 	actionDoctor       action = "doctor"
 	actionQuit         action = "quit"
@@ -67,7 +69,8 @@ var dashboardCommands = []commandItem{
 	{Action: actionUpdate, Label: "Update profile", Description: "Save the current Antigravity credential into this profile"},
 	{Action: actionRefresh, Label: "Refresh quota", Description: "Bypass cache and fetch live model quota now"},
 	{Action: actionAutoRefresh, Label: "Auto refresh", Description: "Set refresh seconds; enter 0 to disable"},
-	{Action: actionAutoSwitch, Label: "Auto switch", Description: "Apply the conservative quota recommendation"},
+	{Action: actionAutoSwitch, Label: "Auto switch now", Description: "Apply the current quota recommendation without closing"},
+	{Action: actionAutoThreshold, Label: "Auto threshold", Description: "Set the switch threshold from 0 to 100 percent"},
 	{Action: actionPrevious, Label: "Previous account", Description: "Return to the previously active profile"},
 	{Action: actionDoctor, Label: "Run doctor", Description: "Check platform, keyring, paths and application state"},
 	{Action: actionQuit, Label: "Quit dashboard", Description: "Close agswitch without changing the account"},
@@ -89,11 +92,14 @@ type Model struct {
 	Searching       bool
 	RefreshInput    string
 	EditingRefresh  bool
+	ThresholdInput  string
+	EditingThreshold bool
 	Status          string
 	Details         string
 	Width           int
 	Height          int
 	Busy            bool
+	Initialized     bool
 	RefreshSequence uint64
 }
 
