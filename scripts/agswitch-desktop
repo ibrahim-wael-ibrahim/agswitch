@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+APP="${AGSWITCH_BIN:-agswitch}"
+TITLE="${AGSWITCH_TITLE:-AGSwitch}"
+
+has() { command -v "$1" >/dev/null 2>&1; }
+
+if [[ -n "${AGSWITCH_TERMINAL:-}" ]]; then
+  exec sh -lc "$AGSWITCH_TERMINAL \"$APP\" tui --stay"
+fi
+
+if has kitty; then
+  exec kitty --class agswitch --title "$TITLE" -e "$APP" tui --stay
+elif has foot; then
+  exec foot --app-id=agswitch --title="$TITLE" "$APP" tui --stay
+elif has alacritty; then
+  exec alacritty --class agswitch,agswitch --title "$TITLE" -e "$APP" tui --stay
+elif has wezterm; then
+  exec wezterm start --class agswitch -- "$APP" tui --stay
+elif has ghostty; then
+  exec ghostty --class=agswitch --title="$TITLE" -e "$APP" tui --stay
+elif has konsole; then
+  exec konsole --title "$TITLE" -e "$APP" tui --stay
+elif has gnome-terminal; then
+  exec gnome-terminal --title="$TITLE" -- "$APP" tui --stay
+elif has xfce4-terminal; then
+  exec xfce4-terminal --title="$TITLE" --command="$APP tui --stay"
+elif has x-terminal-emulator; then
+  exec x-terminal-emulator -T "$TITLE" -e "$APP" tui --stay
+fi
+
+printf 'agswitch-desktop: no supported terminal emulator was found.\n' >&2
+printf 'Set AGSWITCH_TERMINAL to a command such as: kitty -e\n' >&2
+exit 1
