@@ -165,10 +165,8 @@ install_hyprland_integration() {
   cat > "$app_config" <<EOF
 # Managed by AGSwitch installer.
 # Super + Ctrl + Shift + A opens the floating dashboard.
-windowrulev2 = float, class:^(agswitch)$
-windowrulev2 = center, class:^(agswitch)$
-windowrulev2 = size 82% 82%, class:^(agswitch)$
-bind = SUPER CTRL SHIFT, A, exec, $launcher
+windowrule = float, center, size 82% 82%, class:^(agswitch)$
+bind = SUPER_CTRL_SHIFT, A, exec, $launcher
 EOF
 
   touch "$main_config"
