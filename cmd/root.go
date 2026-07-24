@@ -4,14 +4,14 @@ import (
 	"time"
 
 	"github.com/ibrahim-wael/agswitch/internal/account"
-	agsapp "github.com/ibrahim-wael/agswitch/internal/app"
+	ragsapp "github.com/ibrahim-wael/agswitch/internal/app"
 	"github.com/ibrahim-wael/agswitch/internal/config"
 	"github.com/ibrahim-wael/agswitch/internal/doctor"
-	agskeyring "github.com/ibrahim-wael/agswitch/internal/keyring"
-	agslock "github.com/ibrahim-wael/agswitch/internal/lock"
-	agsprocess "github.com/ibrahim-wael/agswitch/internal/process"
+	ragskeyring "github.com/ibrahim-wael/agswitch/internal/keyring"
+	ragslock "github.com/ibrahim-wael/agswitch/internal/lock"
+	ragsprocess "github.com/ibrahim-wael/agswitch/internal/process"
 	"github.com/ibrahim-wael/agswitch/internal/quota"
-	agsstate "github.com/ibrahim-wael/agswitch/internal/state"
+	ragsstate "github.com/ibrahim-wael/agswitch/internal/state"
 	"github.com/ibrahim-wael/agswitch/internal/switcher"
 	"github.com/spf13/cobra"
 )
@@ -100,7 +100,7 @@ func newRootCommand(dependencies *dependencies) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(command *cobra.Command, _ []string) error {
-			return runTUI(command, dependencies, false)
+			return runTUI(command, dependencies, true)
 		},
 	}
 	root.AddCommand(
