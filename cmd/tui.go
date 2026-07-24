@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/ibrahim-wael/agswitch/internal/account"
 	"github.com/ibrahim-wael/agswitch/internal/doctor"
@@ -53,27 +54,33 @@ func (b dashboardBackend) Doctor(ctx context.Context) []doctor.Check {
 func newTUICommand(dependencies *dependencies) *cobra.Command {
 	var stay bool
 	var autoThreshold int
+	var autoRefreshSeconds int
 	command := &cobra.Command{
 		Use:   "tui",
 		Short: "Open the responsive interactive dashboard",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			return runTUIWithThreshold(command, dependencies, stay, autoThreshold)
+			if autoRefreshSeconds < 0 {
+				return fmt.Errorf("--auto-refresh must be 0 or a positive number of seconds")
+			}
+			return runTUIWithOptions(command, dependencies, stay, autoThreshold, autoRefreshSeconds)
 		},
 	}
 	command.Flags().BoolVar(&stay, "stay", true, "stay open after switching")
 	command.Flags().IntVar(&autoThreshold, "auto-threshold", 20, "recommend auto-switch when minimum known quota is at or below this percentage")
+	command.Flags().IntVar(&autoRefreshSeconds, "auto-refresh", 0, "refresh live quota every N seconds; 0 disables automatic refresh")
 	return command
 }
 
 func runTUI(command *cobra.Command, dependencies *dependencies, stay bool) error {
-	return runTUIWithThreshold(command, dependencies, stay, 20)
+	return runTUIWithOptions(command, dependencies, stay, 20, 0)
 }
 
-func runTUIWithThreshold(command *cobra.Command, dependencies *dependencies, stay bool, autoThreshold int) error {
+func runTUIWithOptions(command *cobra.Command, dependencies *dependencies, stay bool, autoThreshold, autoRefreshSeconds int) error {
 	return tui.Run(command.Context(), dashboardBackend{dependencies: dependencies}, tui.Options{
 		Version:         resolvedVersion(),
 		AutoThreshold:   autoThreshold,
+		AutoRefresh:     time.Duration(autoRefreshSeconds) * time.Second,
 		ExitAfterSwitch: !stay,
 	})
 }
