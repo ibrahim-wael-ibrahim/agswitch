@@ -1,9 +1,7 @@
 name: test
-
-on:
-  push:
-  pull_request:
-
+on: [push, pull_request]
+permissions:
+  contents: read
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -12,4 +10,91 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - run: go test ./...
+          cache: true
+      - name: Formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+          gofmt -w $(find . -name '*.go' -not -path './vendor/*')
+      - name: Module integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+      - name: Vet
+        id: vet
+        shell: bash
+        run: |
+          set -o pipefail
+          go vet ./... 2>&1 | tee /tmp/vet.log
+      - name: Test with coverage
+        id: test
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -covermode=atomic -coverprofile=/tmp/coverage.out ./... 2>&1 | tee /tmp/test.log
+          go tool cover -func=/tmp/coverage.out | tee /tmp/coverage.txt
+      - name: Race
+        id: race
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -race ./... 2>&1 | tee /tmp/race.log
+      - name: Build
+        id: build
+        shell: bash
+        run: |
+          set -o pipefail
+          go build ./... 2>&1 | tee /tmp/build.log
+      - name: Validate scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/install.sh
+          bash -n scripts/uninstall.sh
+          bash -n scripts/migrate-bash-profiles.sh
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            /tmp/coverage.out
+            /tmp/coverage.txt
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-logs
+          path: |
+            /tmp/vet.log
+            /tmp/test.log
+            /tmp/race.log
+            /tmp/build.log
+            /tmp/coverage.txt
+          if-no-files-found: ignore
+
+  cross-build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build Linux ${{ matrix.goarch }}
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          mkdir -p dist
+          go build -trimpath -ldflags "-s -w -X github.com/ibrahim-wael/agswitch/cmd.version=v1.0.0-rc" -o "dist/agswitch_linux_${GOARCH}" .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cross-build-linux-${{ matrix.goarch }}
+          path: dist/*

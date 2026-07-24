@@ -8,6 +8,6 @@ type Transaction struct {
 	Steps     []string
 }
 
-func NewTransaction(profile string) Transaction {
-	return Transaction{Profile: profile, StartedAt: time.Now().UTC()}
+func NewTransaction(p string) Transaction {
+	return Transaction{Profile: p, StartedAt: time.Now().UTC()}
 }

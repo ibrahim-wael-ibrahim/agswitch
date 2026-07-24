@@ -1,6 +1,11 @@
 package account
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+var ErrNotFound = errors.New("account not found")
 
 type Repository interface {
 	List(ctx context.Context) ([]Account, error)
