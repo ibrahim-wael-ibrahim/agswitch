@@ -22,9 +22,19 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.Status = "Load failed: " + msg.err.Error()
 			return m, m.scheduleAutoRefresh()
 		}
+		firstLoad := !m.Initialized
 		m.Accounts = msg.accounts
 		m.Results = msg.results
 		m.Decision = msg.decision
+		if firstLoad {
+			for index, item := range m.filteredAccounts() {
+				if item.Active {
+					m.SelectedAccount = index
+					break
+				}
+			}
+			m.Initialized = true
+		}
 		m.clampSelection()
 		if msg.refresh {
 			m.Status = "Live quota refreshed"
@@ -33,7 +43,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.scheduleAutoRefresh()
 	case autoRefreshMsg:
-		if msg.sequence != m.RefreshSequence || m.Options.AutoRefresh <= 0 || m.Busy || m.Searching || m.EditingRefresh {
+		if msg.sequence != m.RefreshSequence || m.Options.AutoRefresh <= 0 || m.Busy || m.Searching || m.EditingRefresh || m.EditingThreshold {
 			return m, nil
 		}
 		m.Busy = true
@@ -64,7 +74,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.Status = "Command completed"
 			}
-			if m.Options.ExitAfterSwitch && (msg.action == actionSwitchLaunch || msg.action == actionAutoSwitch) {
+			// Interactive auto-switch never exits the dashboard. Explicit launch can
+			// still honor ExitAfterSwitch for script-like invocations.
+			if m.Options.ExitAfterSwitch && msg.action == actionSwitchLaunch {
 				return m, tea.Quit
 			}
 			m.Busy = true
@@ -73,6 +85,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if m.EditingRefresh {
 			return m.updateRefreshInput(msg)
+		}
+		if m.EditingThreshold {
+			return m.updateThresholdInput(msg)
 		}
 		if m.Busy {
 			switch msg.String() {
@@ -163,6 +178,43 @@ func (m Model) updateRefreshInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) updateThresholdInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.EditingThreshold = false
+		m.Focus = focusCommands
+		m.Status = "Auto-switch threshold unchanged"
+		return m, m.scheduleAutoRefresh()
+	case "enter":
+		threshold, err := strconv.Atoi(strings.TrimSpace(m.ThresholdInput))
+		if err != nil || threshold < 0 || threshold > 100 {
+			m.Status = "Enter a whole percentage from 0 to 100"
+			return m, nil
+		}
+		m.Options.AutoThreshold = threshold
+		m.EditingThreshold = false
+		m.Focus = focusCommands
+		m.Status = fmt.Sprintf("Auto-switch threshold set to %d%%", threshold)
+		m.Details = "Press a to apply the recommendation now. The dashboard stays open after switching."
+		m.Busy = true
+		return m, m.loadDataCommand(false)
+	case "backspace":
+		if m.ThresholdInput != "" {
+			_, size := utf8.DecodeLastRuneInString(m.ThresholdInput)
+			m.ThresholdInput = m.ThresholdInput[:len(m.ThresholdInput)-size]
+		}
+		return m, nil
+	case "ctrl+u":
+		m.ThresholdInput = ""
+		return m, nil
+	}
+	text := msg.String()
+	if len(text) == 1 && text >= "0" && text <= "9" {
+		m.ThresholdInput += text
+	}
+	return m, nil
+}
+
 func (m Model) beginRefreshInput() (tea.Model, tea.Cmd) {
 	m.EditingRefresh = true
 	m.Focus = focusRefreshInput
@@ -173,6 +225,15 @@ func (m Model) beginRefreshInput() (tea.Model, tea.Cmd) {
 		m.RefreshInput = "0"
 	}
 	m.Status = "Set auto-refresh seconds; use 0 to disable"
+	return m, nil
+}
+
+func (m Model) beginThresholdInput() (tea.Model, tea.Cmd) {
+	m.EditingThreshold = true
+	m.Focus = focusThresholdInput
+	m.RefreshSequence++
+	m.ThresholdInput = strconv.Itoa(m.Options.AutoThreshold)
+	m.Status = "Set auto-switch threshold from 0 to 100 percent"
 	return m, nil
 }
 
@@ -227,6 +288,9 @@ func (m Model) updateNavigation(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if selected == actionAutoRefresh {
 				return m.beginRefreshInput()
 			}
+			if selected == actionAutoThreshold {
+				return m.beginThresholdInput()
+			}
 			m.Busy = true
 			m.Status = "Running " + strings.ToLower(dashboardCommands[m.SelectedCommand].Label) + "..."
 			return m, m.operationCommand(selected)
@@ -240,6 +304,8 @@ func (m Model) updateNavigation(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.loadDataCommand(true)
 	case "R":
 		return m.beginRefreshInput()
+	case "A":
+		return m.beginThresholdInput()
 	case "a":
 		m.Busy = true
 		m.Status = "Applying auto-switch recommendation..."
