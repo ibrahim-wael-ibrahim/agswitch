@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"runtime/debug"
+
+	"github.com/spf13/cobra"
 )
 
 var version = "dev"
