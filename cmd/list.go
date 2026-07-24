@@ -1,18 +1,3 @@
 package cmd
-
-import (
-	"fmt"
-
-	"github.com/spf13/cobra"
-)
-
-func newListCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:   "list",
-		Short: "List saved profiles",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			_, err := fmt.Fprintln(cmd.OutOrStdout(), "list profiles (bootstrap only)")
-			return err
-		},
-	}
-}
+import("encoding/json";"fmt";"github.com/spf13/cobra")
+func newListCommand(d *dependencies)*cobra.Command{var j bool;c:=&cobra.Command{Use:"list",Aliases:[]string{"ls"},Short:"List saved profiles",Args:cobra.NoArgs,RunE:func(c *cobra.Command,_ []string)error{x,e:=d.app.List(c.Context());if e!=nil{return e};if j{return json.NewEncoder(c.OutOrStdout()).Encode(x)};if len(x)==0{_,e=fmt.Fprintln(c.OutOrStdout(),"No saved profiles.");return e};for _,v:=range x{m:=" ";if v.Active{m="*"};if _,e=fmt.Fprintf(c.OutOrStdout(),"%s %-20s %s\n",m,v.ID,v.Email);e!=nil{return e}};return nil}};c.Flags().BoolVar(&j,"json",false,"print JSON");return c}

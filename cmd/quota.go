@@ -1,23 +1,3 @@
 package cmd
-
-import (
-	"fmt"
-
-	"github.com/spf13/cobra"
-)
-
-func newQuotaCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:   "quota [profile]",
-		Short: "Show quota information",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 {
-				_, err := fmt.Fprintln(cmd.OutOrStdout(), "quota view (bootstrap only)")
-				return err
-			}
-
-			_, err := fmt.Fprintf(cmd.OutOrStdout(), "quota for %q (bootstrap only)\n", args[0])
-			return err
-		},
-	}
-}
+import("fmt";"github.com/spf13/cobra")
+func newQuotaCommand()*cobra.Command{return &cobra.Command{Use:"quota [profile]",Short:"Show quota information",Args:cobra.MaximumNArgs(1),RunE:func(c *cobra.Command,_ []string)error{fmt.Fprintln(c.ErrOrStderr(),"Live quota is not enabled yet because it depends on an unstable internal Google API.");return fmt.Errorf("quota provider unavailable")}}}

@@ -1,17 +1,3 @@
 package tui
-
-import tea "charm.land/bubbletea/v2"
-
-func (m Model) View() tea.View {
-	if len(m.Accounts) == 0 {
-		return tea.NewView("agswitch\n\nNo accounts loaded yet.\n\nPress q to quit.\n")
-	}
-
-	selected := m.Selected
-	if selected < 0 || selected >= len(m.Accounts) {
-		selected = 0
-	}
-
-	account := m.Accounts[selected]
-	return tea.NewView("agswitch\n\nSelected profile: " + account.ID + "\nStatus: " + m.Status + "\n\nPress q to quit.\n")
-}
+import("fmt";"strings";tea "charm.land/bubbletea/v2")
+func(m Model)View()tea.View{var b strings.Builder;b.WriteString("agswitch — Antigravity accounts\n\n");if len(m.Accounts)==0{b.WriteString("No profiles saved. Run: agswitch save <profile> or agswitch migrate\n\nq quit\n");return tea.NewView(b.String())};for i,a:=range m.Accounts{c:="  ";if i==m.Selected{c="> "};active:=" ";if a.Active{active="*"};fmt.Fprintf(&b,"%s%s %-20s %s\n",c,active,a.ID,a.Email)};b.WriteString("\nStatus: "+m.Status+"\n\n↑/↓ or j/k move   enter switch+launch   r refresh   q quit\n");return tea.NewView(b.String())}
