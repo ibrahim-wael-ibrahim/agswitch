@@ -1,6 +1,9 @@
 package brand
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 const (
 	Name       = "agswitch"
@@ -19,20 +22,31 @@ const (
 	White   = "\033[1;37m"
 )
 
-const ASCII = `   _    ____ ____        _ _       _     
-  / \  / ___/ ___|__  __(_) |_ ___| |__  
- / _ \| |  _\___ \\ \/ / | __/ __| '_ \ 
+const ASCII = `   _    ____ ____        _ _       _
+  / \  / ___/ ___|__  __(_) |_ ___| |__
+ / _ \| |  _\___ \\ \/ / | __/ __| '_ \
 / ___ \ |_| |___) |>  <| | || (__| | | |
 /_/   \_\____|____//_/\_\_|\__\___|_| |_|
 `
 
-func Banner(version string) string {
-	if version == "" {
-		version = "dev"
+// VersionLabel returns a human-readable version with exactly one leading v.
+// Development builds remain "dev" instead of becoming "vdev".
+func VersionLabel(version string) string {
+	version = strings.TrimSpace(version)
+	if version == "" || strings.EqualFold(version, "dev") {
+		return "dev"
 	}
-	return fmt.Sprintf("%s%s%s%s%s\n%s%s v%s%s  %sby %s · %s%s\n",
-		Cyan, Bold, ASCII, Reset, Cyan,
-		Bold, Name, version, Reset,
+	version = strings.TrimLeft(version, "vV")
+	if version == "" {
+		return "dev"
+	}
+	return "v" + version
+}
+
+func Banner(version string) string {
+	return fmt.Sprintf("%s%s%s%s\n%s%s %s%s  %sby %s · %s%s\n",
+		Bold, ASCII, Reset,
+		Bold, Name, VersionLabel(version), Reset,
 		Muted, Author, Repository, Reset,
 	)
 }
