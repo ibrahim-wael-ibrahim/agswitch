@@ -9,6 +9,7 @@ type ModelUsage struct {
 	Limit     int       `json:"limit"`
 	ResetAt   time.Time `json:"reset_at,omitempty"`
 	Exhausted bool      `json:"exhausted,omitempty"`
+	Variants  int       `json:"variants,omitempty"`
 }
 
 type Snapshot struct {
