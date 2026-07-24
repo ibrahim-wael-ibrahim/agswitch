@@ -17,10 +17,12 @@ import (
 )
 
 type dependencies struct {
-	config config.Config
-	app    *agsapp.Service
-	quota  *quota.Service
-	doctor doctor.Service
+	config  config.Config
+	app     *agsapp.Service
+	quota   *quota.Service
+	doctor  doctor.Service
+	process *agsprocess.Manager
+	state   *agsstate.Store
 }
 
 func Execute() error {
@@ -37,7 +39,10 @@ func buildDependencies() *dependencies {
 	processManager := &agsprocess.Manager{
 		Executable: cfg.AppPath,
 		Detector:   detector,
-		Launcher:   agsprocess.LinuxLauncher{LogPath: cfg.LogPath},
+		Launcher: agsprocess.LinuxLauncher{
+			LogPath:     cfg.LogPath,
+			MaxLogBytes: 5 << 20,
+		},
 		Quitter: agsprocess.CommandThenSignalQuitter{
 			Command:  cfg.QuitCommand,
 			Detector: detector,
@@ -49,11 +54,12 @@ func buildDependencies() *dependencies {
 			},
 		},
 	}
+	stateStore := agsstate.New(cfg.StatePath)
 	switchService := &switcher.Service{
 		ActiveStore:  active,
 		ProfileStore: profiles,
 		Process:      processManager,
-		State:        agsstate.New(cfg.StatePath),
+		State:        stateStore,
 		Locker:       locker,
 	}
 	appService := &agsapp.Service{
@@ -73,9 +79,11 @@ func buildDependencies() *dependencies {
 		Concurrency: 4,
 	}
 	return &dependencies{
-		config: cfg,
-		app:    appService,
-		quota:  quotaService,
+		config:  cfg,
+		app:     appService,
+		quota:   quotaService,
+		process: processManager,
+		state:   stateStore,
 		doctor: doctor.Service{
 			Config:   cfg,
 			Active:   active,
@@ -98,14 +106,22 @@ func newRootCommand(dependencies *dependencies) *cobra.Command {
 	root.AddCommand(
 		newTUICommand(dependencies),
 		newUseCommand(dependencies),
+		newPreviousCommand(dependencies),
 		newSaveCommand(dependencies),
+		newUpdateCommand(dependencies),
+		newCloneCommand(dependencies),
+		newRenameCommand(dependencies),
+		newInfoCommand(dependencies),
+		newDetectCommand(dependencies),
 		newListCommand(dependencies),
 		newCurrentCommand(dependencies),
+		newStatusCommand(dependencies),
 		newDeleteCommand(dependencies),
 		newMigrateCommand(dependencies),
 		newQuotaCommand(dependencies),
 		newDoctorCommand(dependencies),
 		newConfigCommand(dependencies),
+		newVersionCommand(),
 	)
 	return root
 }
