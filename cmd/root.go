@@ -106,6 +106,7 @@ func newRootCommand(dependencies *dependencies) *cobra.Command {
 	root.AddCommand(
 		newTUICommand(dependencies),
 		newUseCommand(dependencies),
+		newAutoSwitchCommand(dependencies),
 		newPreviousCommand(dependencies),
 		newSaveCommand(dependencies),
 		newUpdateCommand(dependencies),
