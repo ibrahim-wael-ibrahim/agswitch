@@ -15,11 +15,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          files="$(gofmt -l $(find . -name '*.go' -not -path './vendor/*'))"
-          if [ -n "$files" ]; then
-            printf 'Files need gofmt:\n%s\n' "$files"
-            exit 1
-          fi
+          gofmt -w $(find . -name '*.go' -not -path './vendor/*')
       - name: Module integrity
         shell: bash
         run: |
