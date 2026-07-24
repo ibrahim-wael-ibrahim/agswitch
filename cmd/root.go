@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"time"
+
 	"github.com/ibrahim-wael/agswitch/internal/account"
 	agsapp "github.com/ibrahim-wael/agswitch/internal/app"
 	"github.com/ibrahim-wael/agswitch/internal/config"
@@ -8,33 +10,102 @@ import (
 	agskeyring "github.com/ibrahim-wael/agswitch/internal/keyring"
 	agslock "github.com/ibrahim-wael/agswitch/internal/lock"
 	agsprocess "github.com/ibrahim-wael/agswitch/internal/process"
+	"github.com/ibrahim-wael/agswitch/internal/quota"
 	agsstate "github.com/ibrahim-wael/agswitch/internal/state"
 	"github.com/ibrahim-wael/agswitch/internal/switcher"
 	"github.com/spf13/cobra"
-	"time"
 )
 
 type dependencies struct {
 	config config.Config
 	app    *agsapp.Service
+	quota  *quota.Service
 	doctor doctor.Service
 }
 
-func Execute() error { return newRootCommand(buildDependencies()).Execute() }
+func Execute() error {
+	return newRootCommand(buildDependencies()).Execute()
+}
+
 func buildDependencies() *dependencies {
 	cfg := config.Default()
-	a := account.NewFileRepository(cfg.AccountsPath)
+	accounts := account.NewFileRepository(cfg.AccountsPath)
 	active := agskeyring.NewActiveStore()
 	profiles := agskeyring.NewProfileStore()
-	l := agslock.New(cfg.LockPath)
-	det := agsprocess.LinuxDetector{}
-	p := &agsprocess.Manager{Executable: cfg.AppPath, Detector: det, Launcher: agsprocess.LinuxLauncher{LogPath: cfg.LogPath}, Quitter: agsprocess.CommandThenSignalQuitter{Command: cfg.QuitCommand, Detector: det, Timeout: 4 * time.Second, Fallback: agsprocess.SignalQuitter{Detector: det, Timeout: cfg.GracefulTimeout, Force: cfg.ForceKill}}}
-	sw := &switcher.Service{ActiveStore: active, ProfileStore: profiles, Process: p, State: agsstate.New(cfg.StatePath), Locker: l}
-	app := &agsapp.Service{Active: active, Profiles: profiles, Accounts: a, Switcher: sw, Locker: l}
-	return &dependencies{cfg, app, doctor.Service{Config: cfg, Active: active, Accounts: a, Process: p}}
+	locker := agslock.New(cfg.LockPath)
+	detector := agsprocess.LinuxDetector{}
+	processManager := &agsprocess.Manager{
+		Executable: cfg.AppPath,
+		Detector:   detector,
+		Launcher:   agsprocess.LinuxLauncher{LogPath: cfg.LogPath},
+		Quitter: agsprocess.CommandThenSignalQuitter{
+			Command:  cfg.QuitCommand,
+			Detector: detector,
+			Timeout:  4 * time.Second,
+			Fallback: agsprocess.SignalQuitter{
+				Detector: detector,
+				Timeout:  cfg.GracefulTimeout,
+				Force:    cfg.ForceKill,
+			},
+		},
+	}
+	switchService := &switcher.Service{
+		ActiveStore:  active,
+		ProfileStore: profiles,
+		Process:      processManager,
+		State:        agsstate.New(cfg.StatePath),
+		Locker:       locker,
+	}
+	appService := &agsapp.Service{
+		Active:   active,
+		Profiles: profiles,
+		Accounts: accounts,
+		Switcher: switchService,
+		Locker:   locker,
+	}
+	quotaService := &quota.Service{
+		Profiles: profiles,
+		Provider: quota.NewGoogleProvider(),
+		Cache: &quota.FileCache{
+			Path: cfg.QuotaCache,
+			TTL:  5 * time.Minute,
+		},
+		Concurrency: 4,
+	}
+	return &dependencies{
+		config: cfg,
+		app:    appService,
+		quota:  quotaService,
+		doctor: doctor.Service{
+			Config:   cfg,
+			Active:   active,
+			Accounts: accounts,
+			Process:  processManager,
+		},
+	}
 }
-func newRootCommand(d *dependencies) *cobra.Command {
-	r := &cobra.Command{Use: "agswitch", Short: "Switch Antigravity accounts safely", SilenceUsage: true, SilenceErrors: true, RunE: func(c *cobra.Command, _ []string) error { return runTUI(c, d, false) }}
-	r.AddCommand(newTUICommand(d), newUseCommand(d), newSaveCommand(d), newListCommand(d), newCurrentCommand(d), newDeleteCommand(d), newMigrateCommand(d), newQuotaCommand(), newDoctorCommand(d), newConfigCommand(d))
-	return r
+
+func newRootCommand(dependencies *dependencies) *cobra.Command {
+	root := &cobra.Command{
+		Use:           "agswitch",
+		Short:         "Switch Antigravity accounts safely",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(command *cobra.Command, _ []string) error {
+			return runTUI(command, dependencies, false)
+		},
+	}
+	root.AddCommand(
+		newTUICommand(dependencies),
+		newUseCommand(dependencies),
+		newSaveCommand(dependencies),
+		newListCommand(dependencies),
+		newCurrentCommand(dependencies),
+		newDeleteCommand(dependencies),
+		newMigrateCommand(dependencies),
+		newQuotaCommand(dependencies),
+		newDoctorCommand(dependencies),
+		newConfigCommand(dependencies),
+	)
+	return root
 }
