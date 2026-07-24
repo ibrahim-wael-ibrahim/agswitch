@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var version = "dev"
+var version = "v1.0.0"
 
 func resolvedVersion() string {
 	resolved := version
@@ -49,7 +49,6 @@ func newStatusCommand(dependencies *dependencies) *cobra.Command {
 				"application_running": running,
 				"previous":            stateSnapshot.Previous,
 				"updated_at":          stateSnapshot.UpdatedAt,
-				"version":             resolvedVersion(),
 			}
 			if asJSON {
 				return json.NewEncoder(command.OutOrStdout()).Encode(output)
@@ -118,12 +117,12 @@ func newVersionCommand() *cobra.Command {
 			resolved := resolvedVersion()
 			if asJSON {
 				return json.NewEncoder(command.OutOrStdout()).Encode(map[string]string{
-					"name":       brand.Name,
-					"version":    resolved,
-					"author":     brand.Author,
+					"name":        brand.Name,
+					"version":     resolved,
+					"author":      brand.Author,
 					"github_user": brand.GitHubUser,
-					"repository": brand.Repository,
-					"go_version": runtime.Version(),
+					"repository":  brand.Repository,
+					"go_version":  runtime.Version(),
 				})
 			}
 			fmt.Fprint(command.OutOrStdout(), brand.Banner(resolved))
