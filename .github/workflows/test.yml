@@ -11,7 +11,38 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: go vet ./...
-      - run: go test ./...
-      - run: go test -race ./...
-      - run: go build ./...
+      - name: Vet
+        id: vet
+        shell: bash
+        run: |
+          set -o pipefail
+          go vet ./... 2>&1 | tee /tmp/vet.log
+      - name: Test
+        id: test
+        shell: bash
+        run: |
+          set -o pipefail
+          go test ./... 2>&1 | tee /tmp/test.log
+      - name: Race
+        id: race
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -race ./... 2>&1 | tee /tmp/race.log
+      - name: Build
+        id: build
+        shell: bash
+        run: |
+          set -o pipefail
+          go build ./... 2>&1 | tee /tmp/build.log
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-logs
+          path: |
+            /tmp/vet.log
+            /tmp/test.log
+            /tmp/race.log
+            /tmp/build.log
+          if-no-files-found: ignore
