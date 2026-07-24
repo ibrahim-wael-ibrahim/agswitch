@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -18,7 +19,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.Busy = false
 		if msg.err != nil {
 			m.Status = "Load failed: " + msg.err.Error()
-			return m, nil
+			return m, m.scheduleAutoRefresh()
 		}
 		m.Accounts = msg.accounts
 		m.Results = msg.results
@@ -29,12 +30,19 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.Status = "Ready"
 		}
-		return m, nil
+		return m, m.scheduleAutoRefresh()
+	case autoRefreshMsg:
+		if msg.sequence != m.RefreshSequence || m.Options.AutoRefresh <= 0 || m.Busy || m.Searching || m.EditingRefresh {
+			return m, nil
+		}
+		m.Busy = true
+		m.Status = "Auto refreshing live quota..."
+		return m, m.loadDataCommand(true)
 	case operationMsg:
 		m.Busy = false
 		if msg.err != nil {
 			m.Status = "Command failed: " + msg.err.Error()
-			return m, nil
+			return m, m.scheduleAutoRefresh()
 		}
 		if msg.details != "" {
 			m.Details = msg.details
@@ -42,7 +50,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.action {
 		case actionDoctor:
 			m.Status = "Doctor completed"
-			return m, nil
+			return m, m.scheduleAutoRefresh()
 		case actionRefresh:
 			m.Busy = true
 			m.Status = "Refreshing live quota..."
@@ -62,6 +70,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.loadDataCommand(false)
 		}
 	case tea.KeyMsg:
+		if m.EditingRefresh {
+			return m.updateRefreshInput(msg)
+		}
 		if m.Busy {
 			switch msg.String() {
 			case "q", "ctrl+c":
@@ -82,13 +93,13 @@ func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.Searching = false
 		m.Focus = focusAccounts
-		return m, nil
+		return m, m.scheduleAutoRefresh()
 	case "enter":
 		m.Searching = false
 		m.Focus = focusAccounts
 		m.SelectedAccount = 0
 		m.Status = fmt.Sprintf("Filter: %q", m.Search)
-		return m, nil
+		return m, m.scheduleAutoRefresh()
 	case "backspace":
 		if m.Search != "" {
 			_, size := utf8.DecodeLastRuneInString(m.Search)
@@ -106,6 +117,65 @@ func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.Search += text
 		m.SelectedAccount = 0
 	}
+	return m, nil
+}
+
+func (m Model) updateRefreshInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.EditingRefresh = false
+		m.Focus = focusCommands
+		m.Status = "Auto refresh unchanged"
+		return m, m.scheduleAutoRefresh()
+	case "enter":
+		seconds, err := strconv.Atoi(strings.TrimSpace(m.RefreshInput))
+		if err != nil || seconds < 0 {
+			m.Status = "Enter a whole number of seconds, or 0 to disable"
+			return m, nil
+		}
+		m.Options.AutoRefresh = timeDurationSeconds(seconds)
+		m.RefreshSequence++
+		m.EditingRefresh = false
+		m.Focus = focusCommands
+		if seconds == 0 {
+			m.Status = "Auto refresh disabled"
+			m.Details = "Auto refresh is off. Press r to refresh manually."
+			return m, nil
+		}
+		m.Status = fmt.Sprintf("Auto refresh set to every %d seconds", seconds)
+		m.Details = fmt.Sprintf("Quota will refresh automatically every %d seconds. Select Auto refresh again or press R to change it.", seconds)
+		return m, m.scheduleAutoRefresh()
+	case "backspace":
+		if m.RefreshInput != "" {
+			_, size := utf8.DecodeLastRuneInString(m.RefreshInput)
+			m.RefreshInput = m.RefreshInput[:len(m.RefreshInput)-size]
+		}
+		return m, nil
+	case "ctrl+u":
+		m.RefreshInput = ""
+		return m, nil
+	}
+	text := msg.String()
+	if len(text) == 1 && text >= "0" && text <= "9" {
+		m.RefreshInput += text
+	}
+	return m, nil
+}
+
+func timeDurationSeconds(seconds int) time.Duration {
+	return time.Duration(seconds) * time.Second
+}
+
+func (m Model) beginRefreshInput() (tea.Model, tea.Cmd) {
+	m.EditingRefresh = true
+	m.Focus = focusRefreshInput
+	m.RefreshSequence++
+	if m.Options.AutoRefresh > 0 {
+		m.RefreshInput = strconv.Itoa(int(m.Options.AutoRefresh / time.Second))
+	} else {
+		m.RefreshInput = "0"
+	}
+	m.Status = "Set auto-refresh seconds; use 0 to disable"
 	return m, nil
 }
 
@@ -128,6 +198,7 @@ func (m Model) updateNavigation(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "/":
 		m.Searching = true
 		m.Focus = focusSearch
+		m.RefreshSequence++
 		m.Status = "Type to filter accounts; Enter applies, Esc cancels"
 	case "up", "k":
 		if m.Focus == focusCommands {
@@ -156,6 +227,9 @@ func (m Model) updateNavigation(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.Status = "Refreshing live quota..."
 				return m, m.loadDataCommand(true)
 			}
+			if selected == actionAutoRefresh {
+				return m.beginRefreshInput()
+			}
 			m.Busy = true
 			m.Status = "Running " + strings.ToLower(dashboardCommands[m.SelectedCommand].Label) + "..."
 			return m, m.operationCommand(selected)
@@ -167,6 +241,8 @@ func (m Model) updateNavigation(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.Busy = true
 		m.Status = "Refreshing live quota..."
 		return m, m.loadDataCommand(true)
+	case "R":
+		return m.beginRefreshInput()
 	case "a":
 		m.Busy = true
 		m.Status = "Applying auto-switch recommendation..."
