@@ -1,7 +1,11 @@
 package quota
 
-import "context"
+import (
+	"context"
+
+	"github.com/ibrahim-wael/agswitch/internal/credentials"
+)
 
 type Provider interface {
-	Fetch(ctx context.Context, profile string) (Snapshot, error)
+	Fetch(context.Context, credentials.Credential) (Snapshot, error)
 }
