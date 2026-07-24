@@ -4,150 +4,95 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/ibrahim-wael/agswitch/internal/account"
-	"github.com/ibrahim-wael/agswitch/internal/config"
-	"github.com/ibrahim-wael/agswitch/internal/credentials"
-	agsprocess "github.com/ibrahim-wael/agswitch/internal/process"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/ibrahim-wael/agswitch/internal/account"
+	"github.com/ibrahim-wael/agswitch/internal/config"
+	"github.com/ibrahim-wael/agswitch/internal/credentials"
+	agsprocess "github.com/ibrahim-wael/agswitch/internal/process"
 )
 
 type Status string
 
 const (
-	OK   Status = "OK"
+	OK Status = "OK"
 	Warn Status = "WARN"
 	Fail Status = "FAIL"
 )
 
-type Check struct {
-	Status        Status
-	Name, Details string
-}
-type ActiveStore interface {
-	Load(context.Context) (credentials.Credential, error)
-}
-type AccountRepository interface {
-	List(context.Context) ([]account.Account, error)
-}
-type ProcessManager interface {
-	Running(context.Context) (bool, error)
-}
-type Service struct {
-	Config   config.Config
-	Active   ActiveStore
-	Accounts AccountRepository
-	Process  ProcessManager
-}
+type Check struct { Status Status; Name, Details string }
+type ActiveStore interface { Load(context.Context) (credentials.Credential, error) }
+type AccountRepository interface { List(context.Context) ([]account.Account, error) }
+type ProcessManager interface { Running(context.Context) (bool, error) }
+type Service struct { Config config.Config; Active ActiveStore; Accounts AccountRepository; Process ProcessManager }
 
 func (s Service) Run(ctx context.Context) []Check {
-	c := []Check{}
-	if runtime.GOOS == "linux" {
-		c = append(c, Check{OK, "Operating system", runtime.GOOS})
-	} else {
-		c = append(c, Check{Fail, "Operating system", "Linux required"})
+	checks := []Check{}
+	if runtime.GOOS == "linux" { checks = append(checks, Check{OK, "Operating system", runtime.GOOS}) } else { checks = append(checks, Check{Fail, "Operating system", "Linux required"}) }
+	for _, command := range []struct{name string; required bool}{{"pgrep", true}, {"secret-tool", true}, {"busctl", false}, {"fzf", false}} {
+		if path, err := exec.LookPath(command.name); err == nil { checks = append(checks, Check{OK, command.name+" installed", path}) } else if command.required { checks = append(checks, Check{Fail, command.name+" installed", "not found"}) } else { checks = append(checks, Check{Warn, command.name+" installed", "not found"}) }
 	}
-	for _, x := range []string{"pgrep", "secret-tool", "busctl"} {
-		if p, e := exec.LookPath(x); e == nil {
-			c = append(c, Check{OK, x + " installed", p})
-		} else {
-			c = append(c, Check{Warn, x + " installed", "not found"})
-		}
-	}
-	c = append(c, checkDir("Config directory", s.Config.BaseDir), checkDir("State directory", s.Config.StateDir), checkPrivateFile("Account metadata", s.Config.AccountsPath), checkExecutable(s.Config.AppPath))
-	if os.Getenv("DBUS_SESSION_BUS_ADDRESS") == "" {
-		c = append(c, Check{Warn, "D-Bus session", "not set"})
-	} else {
-		c = append(c, Check{OK, "D-Bus session", "available"})
-	}
-	if a, e := agsprocess.DBusTrayAvailable(ctx); e != nil {
-		c = append(c, Check{Warn, "Tray D-Bus services", e.Error()})
-	} else if a {
-		c = append(c, Check{OK, "Tray D-Bus services", "detected"})
-	} else {
-		c = append(c, Check{Warn, "Tray D-Bus services", "not detected"})
-	}
+	checks = append(checks,
+		checkDir("Config directory", s.Config.BaseDir),
+		checkDir("State directory", s.Config.StateDir),
+		checkDir("Cache directory", s.Config.CacheDir),
+		checkPrivateFile("Account metadata", s.Config.AccountsPath),
+		checkWritableParent("Log destination", s.Config.LogPath),
+		checkWritableParent("Quota cache", s.Config.QuotaCache),
+		checkExecutable(s.Config.AppPath),
+	)
+	if os.Getenv("DBUS_SESSION_BUS_ADDRESS") == "" { checks = append(checks, Check{Warn, "D-Bus session", "not set"}) } else { checks = append(checks, Check{OK, "D-Bus session", "available"}) }
+	if available, err := agsprocess.DBusTrayAvailable(ctx); err != nil { checks = append(checks, Check{Warn, "Tray D-Bus services", err.Error()}) } else if available { checks = append(checks, Check{OK, "Tray D-Bus services", "detected; Antigravity Quit action still requires device verification"}) } else { checks = append(checks, Check{Warn, "Tray D-Bus services", "not detected; signal fallback will be used"}) }
 	if s.Active != nil {
-		if v, e := s.Active.Load(ctx); e == nil {
-			d := "credential found"
-			if v.Email != "" {
-				d = v.Email
-			}
-			c = append(c, Check{OK, "Active credential", d})
-		} else if errors.Is(e, credentials.ErrNotFound) {
-			c = append(c, Check{Warn, "Active credential", "not found"})
-		} else {
-			c = append(c, Check{Fail, "Active credential", e.Error()})
-		}
+		if credential, err := s.Active.Load(ctx); err == nil { detail := "credential found"; if credential.Email != "" { detail = credential.Email }; checks = append(checks, Check{OK, "Active credential", detail}) } else if errors.Is(err, credentials.ErrNotFound) { checks = append(checks, Check{Warn, "Active credential", "not found"}) } else { checks = append(checks, Check{Fail, "Active credential", err.Error()}) }
 	}
 	if s.Accounts != nil {
-		if a, e := s.Accounts.List(ctx); e == nil {
-			c = append(c, Check{OK, "Saved profiles", fmt.Sprintf("%d profile(s)", len(a))})
-		} else {
-			c = append(c, Check{Fail, "Saved profiles", e.Error()})
-		}
+		if items, err := s.Accounts.List(ctx); err == nil { checks = append(checks, Check{OK, "Saved profiles", fmt.Sprintf("%d profile(s)", len(items))}) } else { checks = append(checks, Check{Fail, "Saved profiles", err.Error()}) }
 	}
 	if s.Process != nil {
-		if r, e := s.Process.Running(ctx); e != nil {
-			c = append(c, Check{Fail, "Antigravity process", e.Error()})
-		} else if r {
-			c = append(c, Check{OK, "Antigravity process", "running"})
-		} else {
-			c = append(c, Check{Warn, "Antigravity process", "stopped"})
-		}
+		if running, err := s.Process.Running(ctx); err != nil { checks = append(checks, Check{Fail, "Antigravity process", err.Error()}) } else if running { checks = append(checks, Check{OK, "Antigravity process", "running"}) } else { checks = append(checks, Check{Warn, "Antigravity process", "stopped"}) }
 	}
-	return c
+	return checks
 }
-func HasFailures(c []Check) bool {
-	for _, v := range c {
-		if v.Status == Fail {
-			return true
-		}
-	}
-	return false
+
+func HasFailures(checks []Check) bool { for _, check := range checks { if check.Status == Fail { return true } }; return false }
+
+func checkDir(name, path string) Check {
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) { return Check{Warn, name, "will be created: "+path} }
+	if err != nil { return Check{Fail, name, err.Error()} }
+	if !info.IsDir() { return Check{Fail, name, "not a directory"} }
+	if info.Mode().Perm()&0o077 != 0 { return Check{Warn, name, fmt.Sprintf("permissions are %o; expected 700", info.Mode().Perm())} }
+	return Check{OK, name, path}
 }
-func checkDir(n, p string) Check {
-	i, e := os.Stat(p)
-	if errors.Is(e, os.ErrNotExist) {
-		return Check{Warn, n, "will be created: " + p}
-	}
-	if e != nil {
-		return Check{Fail, n, e.Error()}
-	}
-	if !i.IsDir() {
-		return Check{Fail, n, "not a directory"}
-	}
-	if i.Mode().Perm()&077 != 0 {
-		return Check{Warn, n, fmt.Sprintf("permissions are %o; expected 700", i.Mode().Perm())}
-	}
-	return Check{OK, n, p}
+
+func checkPrivateFile(name, path string) Check {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) { return Check{Warn, name, "not created yet"} }
+	if err != nil { return Check{Fail, name, err.Error()} }
+	if info.Mode()&os.ModeSymlink != 0 { return Check{Fail, name, "must not be a symbolic link"} }
+	if info.IsDir() { return Check{Fail, name, "is a directory"} }
+	if info.Mode().Perm()&0o077 != 0 { return Check{Warn, name, fmt.Sprintf("permissions are %o; expected 600", info.Mode().Perm())} }
+	return Check{OK, name, filepath.Clean(path)}
 }
-func checkPrivateFile(n, p string) Check {
-	i, e := os.Stat(p)
-	if errors.Is(e, os.ErrNotExist) {
-		return Check{Warn, n, "not created yet"}
-	}
-	if e != nil {
-		return Check{Fail, n, e.Error()}
-	}
-	if i.IsDir() {
-		return Check{Fail, n, "is a directory"}
-	}
-	if i.Mode().Perm()&077 != 0 {
-		return Check{Warn, n, fmt.Sprintf("permissions are %o; expected 600", i.Mode().Perm())}
-	}
-	return Check{OK, n, filepath.Clean(p)}
+
+func checkWritableParent(name, path string) Check {
+	parent := filepath.Dir(path)
+	if err := os.MkdirAll(parent, 0o700); err != nil { return Check{Fail, name, err.Error()} }
+	if err := os.Chmod(parent, 0o700); err != nil { return Check{Warn, name, err.Error()} }
+	probe, err := os.CreateTemp(parent, ".agswitch-doctor-*")
+	if err != nil { return Check{Fail, name, "not writable: "+err.Error()} }
+	probePath := probe.Name(); _ = probe.Close(); _ = os.Remove(probePath)
+	return Check{OK, name, path}
 }
-func checkExecutable(p string) Check {
-	i, e := os.Stat(p)
-	if e != nil {
-		return Check{Fail, "Antigravity executable", e.Error()}
-	}
-	if i.IsDir() || i.Mode().Perm()&0111 == 0 {
-		return Check{Fail, "Antigravity executable", "not executable: " + p}
-	}
-	return Check{OK, "Antigravity executable", strings.TrimSpace(p)}
+
+func checkExecutable(path string) Check {
+	info, err := os.Stat(path)
+	if err != nil { return Check{Fail, "Antigravity executable", err.Error()} }
+	if info.IsDir() || info.Mode().Perm()&0o111 == 0 { return Check{Fail, "Antigravity executable", "not executable: "+path} }
+	return Check{OK, "Antigravity executable", strings.TrimSpace(path)}
 }
