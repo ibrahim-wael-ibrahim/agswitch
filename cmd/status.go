@@ -3,13 +3,25 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"runtime"
 	"runtime/debug"
 
+	"github.com/ibrahim-wael/agswitch/internal/brand"
 	"github.com/ibrahim-wael/agswitch/internal/switcher"
 	"github.com/spf13/cobra"
 )
 
 var version = "dev"
+
+func resolvedVersion() string {
+	resolved := version
+	if resolved == "dev" {
+		if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+			resolved = info.Main.Version
+		}
+	}
+	return resolved
+}
 
 func newStatusCommand(dependencies *dependencies) *cobra.Command {
 	var asJSON bool
@@ -37,6 +49,7 @@ func newStatusCommand(dependencies *dependencies) *cobra.Command {
 				"application_running": running,
 				"previous":            stateSnapshot.Previous,
 				"updated_at":          stateSnapshot.UpdatedAt,
+				"version":             resolvedVersion(),
 			}
 			if asJSON {
 				return json.NewEncoder(command.OutOrStdout()).Encode(output)
@@ -96,19 +109,28 @@ func newPreviousCommand(dependencies *dependencies) *cobra.Command {
 }
 
 func newVersionCommand() *cobra.Command {
-	return &cobra.Command{
+	var asJSON bool
+	command := &cobra.Command{
 		Use:   "version",
-		Short: "Print version information",
+		Short: "Print version and project information",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			resolved := version
-			if resolved == "dev" {
-				if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
-					resolved = info.Main.Version
-				}
+			resolved := resolvedVersion()
+			if asJSON {
+				return json.NewEncoder(command.OutOrStdout()).Encode(map[string]string{
+					"name":       brand.Name,
+					"version":    resolved,
+					"author":     brand.Author,
+					"github_user": brand.GitHubUser,
+					"repository": brand.Repository,
+					"go_version": runtime.Version(),
+				})
 			}
-			_, err := fmt.Fprintln(command.OutOrStdout(), resolved)
-			return err
+			fmt.Fprint(command.OutOrStdout(), brand.Banner(resolved))
+			fmt.Fprintf(command.OutOrStdout(), "Runtime: %s · %s/%s\n", runtime.Version(), runtime.GOOS, runtime.GOARCH)
+			return nil
 		},
 	}
+	command.Flags().BoolVar(&asJSON, "json", false, "print JSON")
+	return command
 }
