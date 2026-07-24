@@ -106,10 +106,14 @@ fetch_asset() {
   curl -fsSL --retry 3 "https://raw.githubusercontent.com/$REPO/master/$relative" -o "$output"
 }
 
+omarchy_tui_launcher() {
+  command -v omarchy-launch-or-focus-tui 2>/dev/null || true
+}
+
 install_desktop_files() {
   [[ "$OS" == linux ]] || return 0
 
-  local app_dir icon_dir desktop_source icon_source launcher_source desktop_target launcher_target
+  local app_dir icon_dir desktop_source icon_source launcher_source desktop_target launcher_target desktop_exec omarchy_launcher
   app_dir="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
   icon_dir="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps"
   desktop_source="$TMP/agswitch.desktop"
@@ -133,7 +137,14 @@ install_desktop_files() {
 
   mkdir -p "$app_dir" "$icon_dir" "$BINDIR"
   install -m 0755 "$launcher_source" "$launcher_target"
-  sed "s|^Exec=.*|Exec=$launcher_target|" "$desktop_source" > "$desktop_target"
+
+  desktop_exec="$launcher_target"
+  omarchy_launcher="$(omarchy_tui_launcher)"
+  if [[ -n "$omarchy_launcher" ]]; then
+    desktop_exec="$omarchy_launcher agswitch"
+  fi
+
+  sed "s|^Exec=.*|Exec=$desktop_exec|" "$desktop_source" > "$desktop_target"
   install -m 0644 "$icon_source" "$icon_dir/agswitch.svg"
   chmod 0644 "$desktop_target"
 
@@ -147,38 +158,71 @@ install_desktop_files() {
 }
 
 hyprland_installed() {
-  has Hyprland || has hyprctl || [[ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]] || [[ -d "$HOME/.config/hypr" ]]
+  has Hyprland || has hyprctl || [[ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]] || [[ -d "${XDG_CONFIG_HOME:-$HOME/.config}/hypr" ]]
+}
+
+remove_managed_block() {
+  local file="$1" start_marker="$2" end_marker="$3" output
+  [[ -f "$file" ]] || return 0
+  output="$(mktemp)"
+  awk -v start="$start_marker" -v end="$end_marker" '
+    $0 == start { skipping = 1; next }
+    $0 == end { skipping = 0; next }
+    !skipping { print }
+  ' "$file" > "$output"
+  mv "$output" "$file"
 }
 
 install_hyprland_integration() {
   [[ "$OS" == linux ]] || return 0
   hyprland_installed || return 0
 
-  local hypr_dir main_config app_config source_line launcher
+  local omarchy_launcher hypr_dir main_config bindings_config app_config source_line start_marker end_marker
+  omarchy_launcher="$(omarchy_tui_launcher)"
+  if [[ -z "$omarchy_launcher" ]]; then
+    warn "Hyprland was found, but omarchy-launch-or-focus-tui is unavailable; skipped the Omarchy shortcut"
+    return 0
+  fi
+
   hypr_dir="${XDG_CONFIG_HOME:-$HOME/.config}/hypr"
   main_config="$hypr_dir/hyprland.conf"
+  bindings_config="$hypr_dir/bindings.conf"
   app_config="$hypr_dir/agswitch.conf"
-  launcher="$BINDIR/agswitch-desktop"
   source_line="source = $app_config"
+  start_marker="# BEGIN AGSwitch managed binding"
+  end_marker="# END AGSwitch managed binding"
 
   mkdir -p "$hypr_dir"
-  cat > "$app_config" <<EOF
+  cat > "$app_config" <<'EOF'
 # Managed by AGSwitch installer.
-# Super + Ctrl + Shift + A opens the floating dashboard.
-windowrule = float, center, size 82% 82%, class:^(agswitch)$
-bind = SUPER_CTRL_SHIFT, A, exec, $launcher
+# Omarchy creates this TUI with initial class org.omarchy.agswitch.
+windowrule = float on, center on, size 82% 82%, match:initial_class ^(org\.omarchy\.agswitch)$
 EOF
 
-  touch "$main_config"
+  touch "$main_config" "$bindings_config"
   if ! grep -Fqx "$source_line" "$main_config"; then
-    printf '\n# AGSwitch integration\n%s\n' "$source_line" >> "$main_config"
+    printf '\n# AGSwitch window rule\n%s\n' "$source_line" >> "$main_config"
   fi
 
+  remove_managed_block "$bindings_config" "$start_marker" "$end_marker"
+  cat >> "$bindings_config" <<EOF
+
+$start_marker
+bindd = SUPER SHIFT CTRL, A, AGSwitch, exec, $omarchy_launcher agswitch
+$end_marker
+EOF
+
   if has hyprctl && [[ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]]; then
-    hyprctl reload >/dev/null 2>&1 || warn "Hyprland config was installed but could not be reloaded automatically"
+    hyprctl reload >/dev/null 2>&1 || warn "Hyprland integration was installed but could not be reloaded automatically"
+    if config_errors="$(hyprctl configerrors 2>/dev/null)" && [[ -n "${config_errors//[[:space:]]/}" ]]; then
+      warn "Hyprland reports configuration errors after reload:"
+      printf '%s\n' "$config_errors" >&2
+    fi
   fi
-  log "Installed Hyprland shortcut: SUPER+CTRL+SHIFT+A"
-  log "Installed Hyprland rules: $app_config"
+
+  log "Installed Omarchy shortcut: SUPER+SHIFT+CTRL+A"
+  log "Installed Hyprland window rule: $app_config"
+  log "Installed Hyprland binding: $bindings_config"
 }
 
 if ! install_release; then
