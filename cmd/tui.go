@@ -1,16 +1,29 @@
 package cmd
 
 import (
-	"github.com/ibrahim-wael/agswitch/internal/tui"
+	"github.com/ibrahim-wael/agswitch/internal/fzfui"
 	"github.com/spf13/cobra"
 )
 
-func newTUICommand(d *dependencies) *cobra.Command {
+func newTUICommand(dependencies *dependencies) *cobra.Command {
 	var stay bool
-	c := &cobra.Command{Use: "tui", Short: "Launch terminal UI", Args: cobra.NoArgs, RunE: func(c *cobra.Command, _ []string) error { return runTUI(c, d, stay) }}
-	c.Flags().BoolVar(&stay, "stay", false, "stay open")
-	return c
+	command := &cobra.Command{
+		Use:   "tui",
+		Short: "Open the fzf quota dashboard",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			return runTUI(command, dependencies, stay)
+		},
+	}
+	command.Flags().BoolVar(&stay, "stay", false, "stay open after switching")
+	return command
 }
-func runTUI(c *cobra.Command, d *dependencies, stay bool) error {
-	return tui.Run(c.Context(), d.app, stay)
+
+func runTUI(command *cobra.Command, dependencies *dependencies, stay bool) error {
+	return fzfui.Run(command.Context(), dependencies.app, dependencies.quota, fzfui.Options{
+		Stay:   stay,
+		Stdin:  command.InOrStdin(),
+		Stdout: command.OutOrStdout(),
+		Stderr: command.ErrOrStderr(),
+	})
 }
