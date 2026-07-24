@@ -4,25 +4,25 @@ import (
 	"time"
 
 	"github.com/ibrahim-wael/agswitch/internal/account"
-	agsapp "github.com/ibrahim-wael/agswitch/internal/app"
+	appsvc "github.com/ibrahim-wael/agswitch/internal/app"
 	"github.com/ibrahim-wael/agswitch/internal/config"
 	"github.com/ibrahim-wael/agswitch/internal/doctor"
-	agskeyring "github.com/ibrahim-wael/agswitch/internal/keyring"
-	agslock "github.com/ibrahim-wael/agswitch/internal/lock"
-	agsprocess "github.com/ibrahim-wael/agswitch/internal/process"
+	keyringpkg "github.com/ibrahim-wael/agswitch/internal/keyring"
+	lockpkg "github.com/ibrahim-wael/agswitch/internal/lock"
+	processpkg "github.com/ibrahim-wael/agswitch/internal/process"
 	"github.com/ibrahim-wael/agswitch/internal/quota"
-	agsstate "github.com/ibrahim-wael/agswitch/internal/state"
+	statepkg "github.com/ibrahim-wael/agswitch/internal/state"
 	"github.com/ibrahim-wael/agswitch/internal/switcher"
 	"github.com/spf13/cobra"
 )
 
 type dependencies struct {
 	config  config.Config
-	app     *agsapp.Service
+	app     *appsvc.Service
 	quota   *quota.Service
 	doctor  doctor.Service
-	process *agsprocess.Manager
-	state   *agsstate.Store
+	process *processpkg.Manager
+	state   *statepkg.Store
 }
 
 func Execute() error {
@@ -32,29 +32,29 @@ func Execute() error {
 func buildDependencies() *dependencies {
 	cfg := config.Default()
 	accounts := account.NewFileRepository(cfg.AccountsPath)
-	active := agskeyring.NewActiveStore()
-	profiles := agskeyring.NewProfileStore()
-	locker := agslock.New(cfg.LockPath)
-	detector := agsprocess.LinuxDetector{}
-	processManager := &agsprocess.Manager{
+	active := keyringpkg.NewActiveStore()
+	profiles := keyringpkg.NewProfileStore()
+	locker := lockpkg.New(cfg.LockPath)
+	detector := processpkg.LinuxDetector{}
+	processManager := &processpkg.Manager{
 		Executable: cfg.AppPath,
 		Detector:   detector,
-		Launcher: agsprocess.LinuxLauncher{
+		Launcher: processpkg.LinuxLauncher{
 			LogPath:     cfg.LogPath,
 			MaxLogBytes: 5 << 20,
 		},
-		Quitter: agsprocess.CommandThenSignalQuitter{
+		Quitter: processpkg.CommandThenSignalQuitter{
 			Command:  cfg.QuitCommand,
 			Detector: detector,
 			Timeout:  4 * time.Second,
-			Fallback: agsprocess.SignalQuitter{
+			Fallback: processpkg.SignalQuitter{
 				Detector: detector,
 				Timeout:  cfg.GracefulTimeout,
 				Force:    cfg.ForceKill,
 			},
 		},
 	}
-	stateStore := agsstate.New(cfg.StatePath)
+	stateStore := statepkg.New(cfg.StatePath)
 	switchService := &switcher.Service{
 		ActiveStore:  active,
 		ProfileStore: profiles,
@@ -62,7 +62,7 @@ func buildDependencies() *dependencies {
 		State:        stateStore,
 		Locker:       locker,
 	}
-	appService := &agsapp.Service{
+	appService := &appsvc.Service{
 		Active:   active,
 		Profiles: profiles,
 		Accounts: accounts,
@@ -100,7 +100,7 @@ func newRootCommand(dependencies *dependencies) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(command *cobra.Command, _ []string) error {
-			return runTUI(command, dependencies, false)
+			return runTUI(command, dependencies, true)
 		},
 	}
 	root.AddCommand(

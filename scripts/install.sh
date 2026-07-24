@@ -96,10 +96,56 @@ build_from_source() {
   (cd "$source" && go build -trimpath -ldflags "-s -w" -o "$output" .)
 }
 
+fetch_asset() {
+  local relative="$1" output="$2"
+  if [[ -f "$ROOT/$relative" ]]; then
+    cp "$ROOT/$relative" "$output"
+    return 0
+  fi
+  has curl || return 1
+  curl -fsSL --retry 3 "https://raw.githubusercontent.com/$REPO/master/$relative" -o "$output"
+}
+
+install_desktop_files() {
+  [[ "$OS" == linux ]] || return 0
+
+  local app_dir icon_dir desktop_source icon_source desktop_target binary
+  app_dir="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+  icon_dir="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps"
+  desktop_source="$TMP/agswitch.desktop"
+  icon_source="$TMP/agswitch.svg"
+  desktop_target="$app_dir/agswitch.desktop"
+  binary="$BINDIR/agswitch"
+
+  if ! fetch_asset "packaging/agswitch.desktop" "$desktop_source"; then
+    warn "Could not download the desktop launcher"
+    return 0
+  fi
+  if ! fetch_asset "assets/agswitch.svg" "$icon_source"; then
+    warn "Could not download the desktop icon"
+    return 0
+  fi
+
+  mkdir -p "$app_dir" "$icon_dir"
+  sed "s|^Exec=.*|Exec=$binary tui --stay|" "$desktop_source" > "$desktop_target"
+  install -m 0644 "$icon_source" "$icon_dir/agswitch.svg"
+  chmod 0644 "$desktop_target"
+
+  if has update-desktop-database; then
+    update-desktop-database "$app_dir" >/dev/null 2>&1 || true
+  fi
+  if has gtk-update-icon-cache; then
+    gtk-update-icon-cache -f -t "${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor" >/dev/null 2>&1 || true
+  fi
+  log "Installed desktop launcher: $desktop_target"
+}
+
 if ! install_release; then
   warn "No compatible release binary was available; falling back to source build."
   build_from_source
 fi
+
+install_desktop_files
 
 case ":$PATH:" in
   *":$BINDIR:"*) ;;
