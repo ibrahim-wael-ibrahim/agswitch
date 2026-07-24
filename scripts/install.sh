@@ -2,12 +2,116 @@
 
 set -Eeuo pipefail
 
-ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO="ibrahim-wael-ibrahim/agswitch"
+VERSION="${AGSWITCH_VERSION:-latest}"
 BINDIR="${BINDIR:-$HOME/.local/bin}"
-OUTPUT="$ROOT/bin/agswitch"
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd || true)"
+TMP="$(mktemp -d 2>/dev/null || mktemp -d -t agswitch)"
+trap 'rm -rf "$TMP"' EXIT
 
-mkdir -p "$ROOT/bin"
-go build -trimpath -o "$OUTPUT" "$ROOT"
-install -d -m 0755 "$BINDIR"
-install -m 0755 "$OUTPUT" "$BINDIR/agswitch"
-printf 'Installed: %s/agswitch\n' "$BINDIR"
+log() { printf '\033[1m[agswitch]\033[0m %s\n' "$*"; }
+warn() { printf '\033[33m[agswitch] warning:\033[0m %s\n' "$*" >&2; }
+die() { printf '\033[31m[agswitch] error:\033[0m %s\n' "$*" >&2; exit 1; }
+has() { command -v "$1" >/dev/null 2>&1; }
+
+OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+ARCH="$(uname -m)"
+case "$OS" in
+  linux*) OS=linux ;;
+  mingw*|msys*|cygwin*) OS=windows ;;
+  *) die "unsupported operating system: $OS" ;;
+esac
+case "$ARCH" in
+  x86_64|amd64) ARCH=amd64 ;;
+  aarch64|arm64) ARCH=arm64 ;;
+  *) die "unsupported architecture: $ARCH" ;;
+esac
+
+install_linux_dependencies() {
+  if has apt-get; then
+    log "Installing Debian/Ubuntu dependencies"
+    sudo apt-get update
+    sudo apt-get install -y ca-certificates curl git golang-go libsecret-tools procps systemd
+  elif has dnf; then
+    log "Installing Fedora dependencies"
+    sudo dnf install -y ca-certificates curl git golang libsecret procps-ng systemd
+  elif has pacman; then
+    log "Installing Arch dependencies"
+    sudo pacman -Sy --needed --noconfirm ca-certificates curl git go libsecret procps-ng systemd
+  else
+    warn "Unknown package manager. Install curl, git, Go, libsecret/secret-tool and procps manually."
+  fi
+}
+
+install_windows_dependencies() {
+  if has winget; then
+    log "Installing Windows build dependencies with winget"
+    winget install --id Git.Git -e --accept-package-agreements --accept-source-agreements || true
+    winget install --id GoLang.Go -e --accept-package-agreements --accept-source-agreements || true
+  elif has choco; then
+    log "Installing Windows build dependencies with Chocolatey"
+    choco install -y git golang
+  else
+    warn "winget/Chocolatey not found. Install Git for Windows and Go manually."
+  fi
+}
+
+release_url() {
+  local name="agswitch_${OS}_${ARCH}"
+  if [[ "$OS" == windows ]]; then name="${name}.exe"; fi
+  if [[ "$VERSION" == latest ]]; then
+    printf 'https://github.com/%s/releases/latest/download/%s' "$REPO" "$name"
+  else
+    printf 'https://github.com/%s/releases/download/%s/%s' "$REPO" "$VERSION" "$name"
+  fi
+}
+
+install_release() {
+  has curl || return 1
+  local url output
+  url="$(release_url)"
+  output="$TMP/agswitch"
+  [[ "$OS" == windows ]] && output="$TMP/agswitch.exe"
+  log "Downloading $url"
+  curl -fL --retry 3 --connect-timeout 10 "$url" -o "$output" || return 1
+  chmod +x "$output" || true
+  mkdir -p "$BINDIR"
+  cp "$output" "$BINDIR/$(basename "$output")"
+  return 0
+}
+
+build_from_source() {
+  [[ "$OS" == linux ]] && install_linux_dependencies || install_windows_dependencies
+  has go || die "Go is required but was not found after dependency installation"
+  local source="$ROOT"
+  if [[ ! -f "$source/go.mod" ]]; then
+    has git || die "Git is required to clone the repository"
+    source="$TMP/source"
+    git clone --depth 1 "https://github.com/$REPO.git" "$source"
+  fi
+  log "Building agswitch from source"
+  mkdir -p "$BINDIR"
+  local output="$BINDIR/agswitch"
+  [[ "$OS" == windows ]] && output="$BINDIR/agswitch.exe"
+  (cd "$source" && go build -trimpath -ldflags "-s -w" -o "$output" .)
+}
+
+if ! install_release; then
+  warn "No compatible release binary was available; falling back to source build."
+  build_from_source
+fi
+
+case ":$PATH:" in
+  *":$BINDIR:"*) ;;
+  *)
+    warn "$BINDIR is not in PATH"
+    printf 'Add this line to your shell profile:\n  export PATH="%s:$PATH"\n' "$BINDIR"
+    ;;
+esac
+
+log "Installed $(ls "$BINDIR"/agswitch* 2>/dev/null | head -n1)"
+if [[ "$OS" == linux ]]; then
+  "$BINDIR/agswitch" doctor || true
+else
+  warn "Windows support requires an Antigravity Windows installation and uses Windows Credential Manager."
+fi
