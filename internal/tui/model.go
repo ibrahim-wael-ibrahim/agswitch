@@ -3,7 +3,9 @@ package tui
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -26,6 +28,7 @@ type Backend interface {
 type Options struct {
 	Version         string
 	AutoThreshold   int
+	AutoRefresh     time.Duration
 	ExitAfterSwitch bool
 }
 
@@ -35,6 +38,7 @@ const (
 	focusCommands focusArea = iota
 	focusAccounts
 	focusSearch
+	focusRefreshInput
 )
 
 type action string
@@ -44,6 +48,7 @@ const (
 	actionSwitchOnly   action = "switch-only"
 	actionUpdate       action = "update"
 	actionRefresh      action = "refresh"
+	actionAutoRefresh  action = "auto-refresh"
 	actionAutoSwitch   action = "auto-switch"
 	actionPrevious     action = "previous"
 	actionDoctor       action = "doctor"
@@ -60,7 +65,8 @@ var dashboardCommands = []commandItem{
 	{Action: actionSwitchLaunch, Label: "Switch + launch", Description: "Activate the selected account and start Antigravity"},
 	{Action: actionSwitchOnly, Label: "Switch only", Description: "Activate the selected account without launching"},
 	{Action: actionUpdate, Label: "Update profile", Description: "Save the current Antigravity credential into this profile"},
-	{Action: actionRefresh, Label: "Refresh quota", Description: "Bypass cache and fetch live model quota"},
+	{Action: actionRefresh, Label: "Refresh quota", Description: "Bypass cache and fetch live model quota now"},
+	{Action: actionAutoRefresh, Label: "Auto refresh", Description: "Set refresh seconds; enter 0 to disable"},
 	{Action: actionAutoSwitch, Label: "Auto switch", Description: "Apply the conservative quota recommendation"},
 	{Action: actionPrevious, Label: "Previous account", Description: "Return to the previously active profile"},
 	{Action: actionDoctor, Label: "Run doctor", Description: "Check platform, keyring, paths and application state"},
@@ -81,11 +87,14 @@ type Model struct {
 	Focus           focusArea
 	Search          string
 	Searching       bool
+	RefreshInput    string
+	EditingRefresh  bool
 	Status          string
 	Details         string
 	Width           int
 	Height          int
 	Busy            bool
+	RefreshSequence uint64
 }
 
 func New(ctx context.Context, backend Backend, options Options) Model {
@@ -94,6 +103,9 @@ func New(ctx context.Context, backend Backend, options Options) Model {
 	}
 	if options.AutoThreshold > 100 {
 		options.AutoThreshold = 100
+	}
+	if options.AutoRefresh < 0 {
+		options.AutoRefresh = 0
 	}
 	return Model{
 		Context: ctx,
@@ -131,6 +143,29 @@ type operationMsg struct {
 	profile string
 	details string
 	err     error
+}
+
+type autoRefreshMsg struct {
+	sequence uint64
+}
+
+func (m Model) scheduleAutoRefresh() tea.Cmd {
+	if m.Options.AutoRefresh <= 0 {
+		return nil
+	}
+	sequence := m.RefreshSequence
+	return tea.Tick(m.Options.AutoRefresh, func(time.Time) tea.Msg {
+		return autoRefreshMsg{sequence: sequence}
+	})
+}
+
+func (m Model) setAutoRefreshSeconds(value string) error {
+	seconds, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || seconds < 0 {
+		return fmt.Errorf("enter a whole number of seconds, or 0 to disable")
+	}
+	m.Options.AutoRefresh = time.Duration(seconds) * time.Second
+	return nil
 }
 
 func (m Model) loadDataCommand(refresh bool) tea.Cmd {
