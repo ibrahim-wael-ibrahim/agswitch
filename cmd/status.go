@@ -4,10 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"runtime/debug"
-	"time"
-
-	"github.com/ibrahim-wael/agswitch/internal/switcher"
-	"github.com/spf13/cobra"
 )
 
 var version = "dev"
@@ -59,44 +55,6 @@ func newStatusCommand(dependencies *dependencies) *cobra.Command {
 	return command
 }
 
-func newPreviousCommand(dependencies *dependencies) *cobra.Command {
-	var restart bool
-	var noStart bool
-	command := &cobra.Command{
-		Use:     "previous",
-		Aliases: []string{"-"},
-		Short:   "Switch to the previous profile",
-		Args:    cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
-			if restart && noStart {
-				return fmt.Errorf("--restart and --no-start cannot be used together")
-			}
-			snapshot, err := dependencies.state.Load(command.Context())
-			if err != nil {
-				return err
-			}
-			if snapshot.Previous == "" {
-				return fmt.Errorf("no previous profile is recorded")
-			}
-			mode := switcher.PreserveLaunchState
-			if restart {
-				mode = switcher.AlwaysLaunch
-			}
-			if noStart {
-				mode = switcher.NeverLaunch
-			}
-			if err := dependencies.app.Use(command.Context(), snapshot.Previous, switcher.Options{LaunchMode: mode}); err != nil {
-				return err
-			}
-			_, err = fmt.Fprintf(command.OutOrStdout(), "Done: %s\n", snapshot.Previous)
-			return err
-		},
-	}
-	command.Flags().BoolVar(&restart, "restart", false, "always launch Antigravity")
-	command.Flags().BoolVar(&noStart, "no-start", false, "leave Antigravity stopped")
-	return command
-}
-
 func newVersionCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
@@ -113,11 +71,4 @@ func newVersionCommand() *cobra.Command {
 			return err
 		},
 	}
-}
-
-func formatTime(value time.Time) string {
-	if value.IsZero() {
-		return "never"
-	}
-	return value.Local().Format("2006-01-02 15:04:05")
 }
