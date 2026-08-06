@@ -53,6 +53,11 @@ func buildDependencies() *dependencies {
 				Force:    cfg.ForceKill,
 			},
 		},
+		Backend: processpkg.LanguageServerReloader{
+			Executable: cfg.LanguageServerPath,
+			Timeout:    12 * time.Second,
+			Force:      cfg.ForceKill,
+		},
 	}
 	stateStore := statepkg.New(cfg.StatePath)
 	switchService := &switcher.Service{
