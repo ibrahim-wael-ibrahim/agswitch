@@ -36,6 +36,16 @@ func buildDependencies() *dependencies {
 	profiles := keyringpkg.NewProfileStore()
 	locker := lockpkg.New(cfg.LockPath)
 	detector := processpkg.LinuxDetector{}
+	primaryQuitter := processpkg.CommandThenSignalQuitter{
+		Command:  cfg.QuitCommand,
+		Detector: detector,
+		Timeout:  4 * time.Second,
+		Fallback: processpkg.SignalQuitter{
+			Detector: detector,
+			Timeout:  cfg.GracefulTimeout,
+			Force:    cfg.ForceKill,
+		},
+	}
 	processManager := &processpkg.Manager{
 		Executable: cfg.AppPath,
 		Detector:   detector,
@@ -43,15 +53,11 @@ func buildDependencies() *dependencies {
 			LogPath:     cfg.LogPath,
 			MaxLogBytes: 5 << 20,
 		},
-		Quitter: processpkg.CommandThenSignalQuitter{
-			Command:  cfg.QuitCommand,
-			Detector: detector,
-			Timeout:  4 * time.Second,
-			Fallback: processpkg.SignalQuitter{
-				Detector: detector,
-				Timeout:  cfg.GracefulTimeout,
-				Force:    cfg.ForceKill,
-			},
+		Quitter: processpkg.CleanupQuitter{
+			Primary: primaryQuitter,
+			Related: []string{cfg.LanguageServerPath},
+			Timeout: cfg.GracefulTimeout,
+			Force:   cfg.ForceKill,
 		},
 		Backend: processpkg.LanguageServerReloader{
 			Executable: cfg.LanguageServerPath,
