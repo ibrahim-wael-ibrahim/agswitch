@@ -26,222 +26,282 @@ const (
 )
 
 func (m Model) View() tea.View {
-	width := m.Width
-	if width <= 0 {
-		width = 100
+	w, h := m.Width, m.Height
+	if w <= 0 {
+		w = 100
 	}
-	height := m.Height
-	if height <= 0 {
-		height = 32
+	if h <= 0 {
+		h = 32
 	}
-	contentWidth := max(40, width-2)
-
-	var output strings.Builder
-	output.WriteString(renderHeader(contentWidth, m))
-	output.WriteByte('\n')
-
-	commandHeight := min(max(len(dashboardCommands)+2, 9), 14)
-	accountHeight := min(max(len(m.filteredAccounts())*2+3, 9), 14)
-	topHeight := max(commandHeight, accountHeight)
-	if contentWidth >= 92 {
-		leftWidth := contentWidth/2 - 1
-		rightWidth := contentWidth - leftWidth - 1
-		output.WriteString(joinColumns(
-			renderCommandPanel(m, leftWidth, topHeight),
-			renderAccountPanel(m, rightWidth, topHeight),
-			leftWidth,
-			rightWidth,
-		))
+	w = max(40, w-2)
+	var out strings.Builder
+	out.WriteString(renderHeader(w, m))
+	out.WriteByte('\n')
+	if m.confirming() {
+		out.WriteString(renderConfirmationPanel(m, w, min(max(8, h-6), 12)))
+		out.WriteByte('\n')
+		out.WriteString(renderHelp(m, w))
+		v := tea.NewView(out.String())
+		v.AltScreen = true
+		return v
+	}
+	ch := min(max(len(dashboardCommands)+2, 10), 16)
+	ah := min(max(len(m.filteredAccounts())*2+3, 10), 16)
+	top := max(ch, ah)
+	if w >= 92 {
+		lw := w/2 - 1
+		rw := w - lw - 1
+		out.WriteString(joinColumns(renderCommandPanel(m, lw, top), renderAccountPanel(m, rw, top), lw, rw))
 	} else {
-		output.WriteString(renderCommandPanel(m, contentWidth, commandHeight))
-		output.WriteByte('\n')
-		output.WriteString(renderAccountPanel(m, contentWidth, accountHeight))
-		topHeight = commandHeight + accountHeight + 1
+		out.WriteString(renderCommandPanel(m, w, ch))
+		out.WriteByte('\n')
+		out.WriteString(renderAccountPanel(m, w, ah))
+		top = ch + ah + 1
 	}
-
-	output.WriteByte('\n')
-	reserved := topHeight + 7
+	out.WriteByte('\n')
+	reserved := top + 7
 	if strings.TrimSpace(m.Details) != "" {
 		reserved += 6
 	}
-	quotaHeight := min(max(7, height-reserved), 14)
-	output.WriteString(renderQuotaPanel(m, contentWidth, quotaHeight))
+	out.WriteString(renderQuotaPanel(m, w, min(max(7, h-reserved), 14)))
 	if strings.TrimSpace(m.Details) != "" {
-		output.WriteByte('\n')
-		output.WriteString(renderBox("Details", truncateLines(m.Details, 4, contentWidth-4), contentWidth, 6, false))
+		out.WriteByte('\n')
+		out.WriteString(renderBox("Details", truncateLines(m.Details, 4, w-4), w, 6, false))
 	}
-	output.WriteByte('\n')
-	output.WriteString(renderHelp(m, contentWidth))
-
-	view := tea.NewView(output.String())
-	view.AltScreen = true
-	return view
+	out.WriteByte('\n')
+	out.WriteString(renderHelp(m, w))
+	v := tea.NewView(out.String())
+	v.AltScreen = true
+	return v
 }
 
 func renderHeader(width int, m Model) string {
-	version := brand.VersionLabel(m.Options.Version)
 	refresh := "manual"
 	if m.Options.AutoRefresh > 0 {
-		refresh = fmt.Sprintf("every %s", compactDuration(m.Options.AutoRefresh))
+		refresh = "every " + compactDuration(m.Options.AutoRefresh)
 	}
-	busy := ""
-	statusColor := green
+	statusColor, busy := green, ""
 	if m.Busy {
-		busy = " · working"
-		statusColor = yellow
+		statusColor, busy = yellow, " · working"
 	}
-	if strings.Contains(strings.ToLower(m.Status), "failed") || strings.Contains(strings.ToLower(m.Status), "error") {
+	low := strings.ToLower(m.Status)
+	if strings.Contains(low, "failed") || strings.Contains(low, "error") {
 		statusColor = red
 	}
-	line1 := paint(cyan, bold+"AGSwitch "+version+reset) + "  " + dim + "by " + brand.Author + " · " + brand.Repository + reset
-	line2 := fmt.Sprintf("%sStatus:%s %s%s%s  %sRefresh:%s %s  %sAuto switch:%s %d%%",
-		bold, reset, paint(statusColor, sanitizeTerminalText(m.Status)), busy, reset,
-		bold, reset, refresh,
-		bold, reset, m.Options.AutoThreshold,
-	)
+	active := m.activeProfile()
+	if active == "" {
+		active = "unknown"
+	}
+	line1 := paint(cyan, bold+"AGSwitch "+brand.VersionLabel(m.Options.Version)+reset) + "  " + dim + "by " + brand.Author + " · " + brand.Repository + reset
+	line2 := fmt.Sprintf("%sAccount:%s %s  %sStatus:%s %s%s  %sRefresh:%s %s  %sAuto switch:%s %d%%", bold, reset, active, bold, reset, paint(statusColor, m.Status), busy, bold, reset, refresh, bold, reset, m.Options.AutoThreshold)
 	if m.EditingRefresh {
-		line2 = fmt.Sprintf("%sAuto refresh seconds:%s %s_  %s(0 disables · Enter save · Esc cancel)%s",
-			bold, reset, m.RefreshInput, dim, reset)
+		line2 = fmt.Sprintf("%sAuto refresh seconds:%s %s_  %s(0 disables · Enter save · Esc cancel)%s", bold, reset, m.RefreshInput, dim, reset)
 	}
 	if m.EditingThreshold {
-		line2 = fmt.Sprintf("%sAuto-switch threshold:%s %s%%_  %s(0–100 · Enter save · Esc cancel)%s",
-			bold, reset, m.ThresholdInput, dim, reset)
+		line2 = fmt.Sprintf("%sAuto-switch threshold:%s %s%%_  %s(0–100 · Enter save · Esc cancel)%s", bold, reset, m.ThresholdInput, dim, reset)
 	}
 	return trimWidth(line1, width) + "\n" + trimWidth(line2, width)
 }
 
 func renderCommandPanel(m Model, width, height int) string {
 	lines := make([]string, 0, len(dashboardCommands))
-	for index, command := range dashboardCommands {
-		description := command.Description
-		switch command.Action {
+	for i, c := range dashboardCommands {
+		d := c.Description
+		switch c.Action {
 		case actionAutoRefresh:
 			if m.Options.AutoRefresh <= 0 {
-				description = "Disabled · Enter seconds or 0"
+				d = "Disabled · Enter seconds or 0"
 			} else {
-				description = "Every " + compactDuration(m.Options.AutoRefresh) + " · Enter to change"
+				d = "Every " + compactDuration(m.Options.AutoRefresh) + " · Enter to change"
 			}
 		case actionAutoSwitch:
-			description = "Apply recommendation now · dashboard stays open"
+			if m.Decision.Switch {
+				d = "Recommended: " + m.Decision.Selected.Profile + " · confirmation required"
+			} else {
+				d = "No switch needed · " + m.Decision.Reason
+			}
 		case actionAutoThreshold:
-			description = fmt.Sprintf("Current %d%% · Enter to change", m.Options.AutoThreshold)
+			d = fmt.Sprintf("Current %d%% · Enter to change", m.Options.AutoThreshold)
 		}
-		line := fmt.Sprintf("  %-18s %s", command.Label, description)
-		if m.Focus == focusCommands && index == m.SelectedCommand {
+		shortcut := ""
+		if c.Shortcut != "" {
+			shortcut = " [" + c.Shortcut + "]"
+		}
+		line := fmt.Sprintf("  %s %-17s%s  %s", c.Icon, c.Label, shortcut, d)
+		if m.Focus == focusCommands && i == m.SelectedCommand {
 			line = reverse + trimWidth(line, width-4) + reset
 		}
 		lines = append(lines, line)
 	}
 	focused := m.Focus == focusCommands || m.Focus == focusRefreshInput || m.Focus == focusThresholdInput
-	return renderBox("Program & Commands", strings.Join(lines, "\n"), width, height, focused)
+	return renderBox("Actions", strings.Join(lines, "\n"), width, height, focused)
 }
 
 func renderAccountPanel(m Model, width, height int) string {
-	query := m.Search
 	cursor := ""
 	if m.Searching {
 		cursor = "_"
 	}
-	lines := []string{paint(blue, "Search:") + " " + query + cursor}
+	lines := []string{paint(blue, "Search:") + " " + m.Search + cursor}
 	items := m.filteredAccounts()
+	now := time.Now()
 	if len(items) == 0 {
 		lines = append(lines, dim+"No matching accounts"+reset)
 	}
-	for index, item := range items {
+	for i, item := range items {
 		active := "○"
 		if item.Active {
 			active = paint(green, "●")
 		}
-		score := "unknown"
-		scoreColor := dim
-		if remaining, ok := quota.MinimumKnownRemaining(m.resultFor(item.ID).Snapshot); ok {
-			score = fmt.Sprintf("%d%%", remaining)
-			scoreColor = quotaColor(remaining)
+		result := m.resultFor(item.ID)
+		live, state := quotaStatus(result, now)
+		badge := renderQuotaBadge(state)
+		score := ""
+		if live {
+			if n, ok := quota.MinimumKnownRemaining(result.Snapshot); ok {
+				score = " " + paint(quotaColor(n), fmt.Sprintf("%d%%", n))
+			}
 		}
-		recommended := ""
-		if m.Decision.Selected.Profile == item.ID {
-			recommended = "  " + paint(yellow, "★ best")
+		rec := ""
+		if m.Decision.Switch && m.Decision.Selected.Profile == item.ID {
+			rec = "  " + paint(yellow, "★ recommended")
 		}
-		primaryWidth := max(8, width-visibleWidth(score)-visibleWidth(recommended)-9)
-		primary := fmt.Sprintf("%s %s  %s%s", active, padRight(trimWidth(item.ID, primaryWidth), primaryWidth), paint(scoreColor, score), recommended)
+		pw := max(8, width-visibleWidth(badge)-visibleWidth(score)-visibleWidth(rec)-10)
+		primary := fmt.Sprintf("%s %s  %s%s%s", active, padRight(trimWidth(item.ID, pw), pw), badge, score, rec)
 		email := strings.TrimSpace(item.Email)
 		if email == "" || email == item.ID {
 			email = "No email metadata"
 		}
 		secondary := "    " + dim + trimWidth(email, width-8) + reset
-		if m.Focus == focusAccounts && index == m.SelectedAccount {
+		if m.Focus == focusAccounts && i == m.SelectedAccount {
 			primary = reverse + trimWidth(primary, width-4) + reset
 			secondary = reverse + trimWidth("    "+email, width-4) + reset
 		}
 		lines = append(lines, primary, secondary)
 	}
-	return renderBox("Search & Accounts", strings.Join(lines, "\n"), width, height, m.Focus == focusAccounts || m.Focus == focusSearch)
+	return renderBox("Accounts", strings.Join(lines, "\n"), width, height, m.Focus == focusAccounts || m.Focus == focusSearch)
+}
+
+func quotaStatus(result quota.Result, now time.Time) (bool, string) {
+	if result.Err != nil {
+		return false, "ERROR"
+	}
+	s := result.Snapshot
+	if s.Source == "cache-stale" || strings.TrimSpace(s.Metadata["warning"]) != "" {
+		return false, "STALE"
+	}
+	if s.Source != "google-cloud-code" || s.FetchedAt.IsZero() {
+		return false, "UNKNOWN"
+	}
+	if now.Sub(s.FetchedAt) > quota.DefaultAutoSwitchMaxAge {
+		return false, "OLD"
+	}
+	if _, ok := quota.MinimumKnownRemaining(s); !ok {
+		return false, "UNKNOWN"
+	}
+	return true, "LIVE"
+}
+
+func renderQuotaBadge(state string) string {
+	switch state {
+	case "LIVE":
+		return paint(green, "[LIVE]")
+	case "STALE":
+		return paint(yellow, "[STALE]")
+	case "OLD":
+		return paint(yellow, "[OLD]")
+	case "ERROR":
+		return paint(red, "[ERROR]")
+	}
+	return dim + "[UNKNOWN]" + reset
 }
 
 func renderQuotaPanel(m Model, width, height int) string {
 	profile, ok := m.selectedProfile()
 	if !ok {
-		return renderBox("Model Quota", dim+"Select an account to inspect model quota."+reset, width, height, false)
+		return renderBox("Model quota", dim+"Select an account to inspect model quota."+reset, width, height, false)
 	}
 	result := m.resultFor(profile)
 	if result.Err != nil {
-		return renderBox("Model Quota · "+profile, paint(red, "Unavailable: "+result.Err.Error()), width, height, false)
+		return renderBox("Model quota · "+profile, paint(red, "Unavailable: "+result.Err.Error()), width, height, false)
 	}
+	live, state := quotaStatus(result, time.Now())
 	models := quota.SortedModels(result.Snapshot)
 	if len(models) == 0 {
-		return renderBox("Model Quota · "+profile, dim+"No model quota returned."+reset, width, height, false)
+		return renderBox("Model quota · "+profile, dim+"No model quota returned."+reset, width, height, false)
 	}
-	entries := make([]string, 0, len(models))
+	entries := make([]string, 0, len(models)+2)
+	if !live {
+		entries = append(entries, paint(yellow, state+" quota is display-only and cannot trigger auto-switch."))
+		if w := strings.TrimSpace(result.Snapshot.Metadata["warning"]); w != "" {
+			entries = append(entries, dim+trimWidth(w, width-6)+reset)
+		}
+	}
 	now := time.Now()
 	for _, model := range models {
 		remaining := "unknown"
 		bar := dim + "[··········]" + reset
 		if model.Remaining >= 0 {
 			remaining = fmt.Sprintf("%3d%%", model.Remaining)
-			bar = paint(quotaColor(model.Remaining), compactBar(model.Remaining, 10))
-			remaining = paint(quotaColor(model.Remaining), remaining)
+			if live {
+				bar = paint(quotaColor(model.Remaining), compactBar(model.Remaining, 10))
+				remaining = paint(quotaColor(model.Remaining), remaining)
+			} else {
+				bar = dim + compactBar(model.Remaining, 10) + reset
+				remaining = dim + remaining + reset
+			}
 		}
 		variants := ""
 		if model.Variants > 1 {
 			variants = fmt.Sprintf(" ×%d", model.Variants)
 		}
 		resetText := ""
-		if duration := quota.ResetIn(model.ResetAt, now); duration > 0 {
-			resetText = " · " + compactDuration(duration)
+		if d := quota.ResetIn(model.ResetAt, now); d > 0 {
+			resetText = " · reset " + compactDuration(d)
 		}
 		entries = append(entries, fmt.Sprintf("%-30s %s %s%s%s", trimWidth(model.Name, 30), bar, remaining, variants, resetText))
 	}
 	body := renderGrid(entries, width-4)
-	requiredRows := len(entries)
+	rows := len(entries)
 	if width >= 100 {
-		requiredRows = (len(entries) + 1) / 2
+		rows = (len(entries) + 1) / 2
 	}
-	height = min(height, max(5, requiredRows+2))
-	title := fmt.Sprintf("Model Quota · %s · %s", profile, result.Snapshot.Source)
-	return renderBox(title, body, width, height, false)
+	height = min(height, max(5, rows+2))
+	age := "unknown age"
+	if !result.Snapshot.FetchedAt.IsZero() {
+		age = compactDuration(maxDuration(0, now.Sub(result.Snapshot.FetchedAt))) + " ago"
+	}
+	return renderBox(fmt.Sprintf("Model quota · %s · %s · %s", profile, state, age), body, width, height, false)
+}
+
+func renderConfirmationPanel(m Model, width, height int) string {
+	body := paint(yellow, bold+m.ConfirmTitle+reset) + "\n\n" + m.ConfirmBody + "\n\n" + paint(green, "Enter / Y") + " continue    " + paint(red, "Esc / N") + " cancel"
+	return renderBox("Safety confirmation", body, width, height, true)
 }
 
 func renderGrid(entries []string, width int) string {
 	if width < 100 {
 		return strings.Join(entries, "\n")
 	}
-	columnWidth := width/2 - 1
+	cw := width/2 - 1
 	rows := (len(entries) + 1) / 2
 	lines := make([]string, 0, rows)
-	for index := 0; index < rows; index++ {
-		left := entries[index]
+	for i := 0; i < rows; i++ {
+		left := entries[i]
 		right := ""
-		if index+rows < len(entries) {
-			right = entries[index+rows]
+		if i+rows < len(entries) {
+			right = entries[i+rows]
 		}
-		lines = append(lines, padRight(trimWidth(left, columnWidth), columnWidth)+"  "+trimWidth(right, columnWidth))
+		lines = append(lines, padRight(trimWidth(left, cw), cw)+"  "+trimWidth(right, cw))
 	}
 	return strings.Join(lines, "\n")
 }
 
 func renderHelp(m Model, width int) string {
-	text := "Tab panels  ↑/↓ move  Enter run  / search  r refresh  R refresh timer  a auto-switch  A threshold  p previous  d doctor  q quit"
-	if m.EditingRefresh {
+	text := "Tab panels  ↑/↓ move  Enter run  s hot-switch  / search  r refresh  a auto  A threshold  p previous  d doctor  q quit"
+	if m.confirming() {
+		text = "Enter / Y confirm · Esc / N cancel · q quit"
+	} else if m.EditingRefresh {
 		text = "Type seconds · 0 disables · Enter save · Esc cancel"
 	} else if m.EditingThreshold {
 		text = "Type threshold 0–100 · Enter save · Esc cancel"
@@ -262,16 +322,16 @@ func renderBox(title, body string, width, height int, focused bool) string {
 	title = marker + sanitizeTerminalText(title)
 	top := "┌─ " + trimWidth(title, width-6) + " " + strings.Repeat("─", max(0, width-visibleWidth(title)-5)) + "┐"
 	bottom := "└" + strings.Repeat("─", max(0, width-2)) + "┘"
-	bodyLines := strings.Split(sanitizeTerminalText(body), "\n")
+	bl := strings.Split(sanitizeTerminalText(body), "\n")
 	maxBody := max(1, height-2)
-	if len(bodyLines) > maxBody {
-		bodyLines = bodyLines[:maxBody]
+	if len(bl) > maxBody {
+		bl = bl[:maxBody]
 	}
-	for len(bodyLines) < maxBody {
-		bodyLines = append(bodyLines, "")
+	for len(bl) < maxBody {
+		bl = append(bl, "")
 	}
 	lines := []string{top}
-	for _, line := range bodyLines {
+	for _, line := range bl {
 		line = trimWidth(line, width-4)
 		lines = append(lines, "│ "+padRight(line, width-4)+" │")
 	}
@@ -279,24 +339,22 @@ func renderBox(title, body string, width, height int, focused bool) string {
 	return strings.Join(lines, "\n")
 }
 
-func joinColumns(left, right string, leftWidth, rightWidth int) string {
-	leftLines := strings.Split(left, "\n")
-	rightLines := strings.Split(right, "\n")
-	rows := max(len(leftLines), len(rightLines))
+func joinColumns(left, right string, lw, rw int) string {
+	ll, rl := strings.Split(left, "\n"), strings.Split(right, "\n")
+	rows := max(len(ll), len(rl))
 	lines := make([]string, 0, rows)
-	for index := 0; index < rows; index++ {
-		leftLine, rightLine := "", ""
-		if index < len(leftLines) {
-			leftLine = leftLines[index]
+	for i := 0; i < rows; i++ {
+		l, r := "", ""
+		if i < len(ll) {
+			l = ll[i]
 		}
-		if index < len(rightLines) {
-			rightLine = rightLines[index]
+		if i < len(rl) {
+			r = rl[i]
 		}
-		lines = append(lines, padRight(leftLine, leftWidth)+" "+padRight(rightLine, rightWidth))
+		lines = append(lines, padRight(l, lw)+" "+padRight(r, rw))
 	}
 	return strings.Join(lines, "\n")
 }
-
 func compactBar(value, width int) string {
 	if value < 0 {
 		return "[" + strings.Repeat("·", width) + "]"
@@ -307,64 +365,62 @@ func compactBar(value, width int) string {
 	filled := value * width / 100
 	return "[" + strings.Repeat("█", filled) + strings.Repeat("░", width-filled) + "]"
 }
-
-func compactDuration(value time.Duration) string {
-	if value >= 24*time.Hour {
-		return fmt.Sprintf("%dd %dh", int(value/(24*time.Hour)), int(value%(24*time.Hour)/time.Hour))
+func compactDuration(v time.Duration) string {
+	if v >= 24*time.Hour {
+		return fmt.Sprintf("%dd %dh", int(v/(24*time.Hour)), int(v%(24*time.Hour)/time.Hour))
 	}
-	if value >= time.Hour {
-		minutes := int(value%time.Hour/time.Minute)
-		if minutes == 0 {
-			return fmt.Sprintf("%dh", int(value/time.Hour))
+	if v >= time.Hour {
+		m := int(v % time.Hour / time.Minute)
+		if m == 0 {
+			return fmt.Sprintf("%dh", int(v/time.Hour))
 		}
-		return fmt.Sprintf("%dh %dm", int(value/time.Hour), minutes)
+		return fmt.Sprintf("%dh %dm", int(v/time.Hour), m)
 	}
-	if value >= time.Minute {
-		return fmt.Sprintf("%dm", max(1, int(value/time.Minute)))
+	if v >= time.Minute {
+		return fmt.Sprintf("%dm", max(1, int(v/time.Minute)))
 	}
-	return fmt.Sprintf("%ds", max(1, int(value/time.Second)))
+	return fmt.Sprintf("%ds", max(1, int(v/time.Second)))
 }
-
-func truncateLines(value string, maxLines, width int) string {
-	lines := strings.Split(value, "\n")
+func maxDuration(a, b time.Duration) time.Duration {
+	if a > b {
+		return a
+	}
+	return b
+}
+func truncateLines(v string, maxLines, width int) string {
+	lines := strings.Split(v, "\n")
 	if len(lines) > maxLines {
 		lines = append(lines[:maxLines-1], "...")
 	}
-	for index := range lines {
-		lines[index] = trimWidth(lines[index], width)
+	for i := range lines {
+		lines[i] = trimWidth(lines[i], width)
 	}
 	return strings.Join(lines, "\n")
 }
-
-func trimWidth(value string, width int) string {
+func trimWidth(v string, width int) string {
 	if width <= 0 {
 		return ""
 	}
-	plain := stripANSI(sanitizeTerminalText(value))
+	plain := stripANSI(sanitizeTerminalText(v))
 	if len([]rune(plain)) <= width {
-		return sanitizeTerminalText(value)
+		return sanitizeTerminalText(v)
 	}
-	runes := []rune(plain)
+	r := []rune(plain)
 	if width == 1 {
-		return string(runes[:1])
+		return string(r[:1])
 	}
-	return string(runes[:width-1]) + "…"
+	return string(r[:width-1]) + "…"
 }
-
-func padRight(value string, width int) string {
-	value = sanitizeTerminalText(value)
-	missing := width - visibleWidth(value)
+func padRight(v string, width int) string {
+	v = sanitizeTerminalText(v)
+	missing := width - visibleWidth(v)
 	if missing <= 0 {
-		return value
+		return v
 	}
-	return value + strings.Repeat(" ", missing)
+	return v + strings.Repeat(" ", missing)
 }
-
-func visibleWidth(value string) int {
-	return len([]rune(stripANSI(sanitizeTerminalText(value))))
-}
-
-func sanitizeTerminalText(value string) string {
+func visibleWidth(v string) int { return len([]rune(stripANSI(sanitizeTerminalText(v)))) }
+func sanitizeTerminalText(v string) string {
 	return strings.Map(func(r rune) rune {
 		switch r {
 		case '\t':
@@ -376,57 +432,50 @@ func sanitizeTerminalText(value string) string {
 			return r
 		}
 		return -1
-	}, value)
+	}, v)
 }
-
-func stripANSI(value string) string {
-	var output strings.Builder
-	inEscape := false
-	for _, r := range value {
+func stripANSI(v string) string {
+	var out strings.Builder
+	esc := false
+	for _, r := range v {
 		if r == '\033' {
-			inEscape = true
+			esc = true
 			continue
 		}
-		if inEscape {
+		if esc {
 			if r == 'm' {
-				inEscape = false
+				esc = false
 			}
 			continue
 		}
-		output.WriteRune(r)
+		out.WriteRune(r)
 	}
-	return output.String()
+	return out.String()
 }
-
 func colorsEnabled() bool {
 	return os.Getenv("NO_COLOR") == "" && strings.ToLower(os.Getenv("TERM")) != "dumb"
 }
-
-func paint(color, value string) string {
+func paint(color, v string) string {
 	if !colorsEnabled() {
-		return value
+		return v
 	}
-	return color + value + reset
+	return color + v + reset
 }
-
-func quotaColor(value int) string {
-	switch {
-	case value <= 20:
+func quotaColor(v int) string {
+	if v <= 20 {
 		return red
-	case value <= 50:
-		return yellow
-	default:
-		return green
 	}
+	if v <= 50 {
+		return yellow
+	}
+	return green
 }
-
 func min(a, b int) int {
 	if a < b {
 		return a
 	}
 	return b
 }
-
 func max(a, b int) int {
 	if a > b {
 		return a
