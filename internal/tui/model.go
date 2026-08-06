@@ -40,40 +40,45 @@ const (
 	focusSearch
 	focusRefreshInput
 	focusThresholdInput
+	focusConfirm
 )
 
 type action string
 
 const (
-	actionSwitchLaunch action = "switch-launch"
-	actionSwitchOnly   action = "switch-only"
-	actionUpdate       action = "update"
-	actionRefresh      action = "refresh"
-	actionAutoRefresh  action = "auto-refresh"
-	actionAutoSwitch   action = "auto-switch"
+	actionHotReload     action = "hot-reload"
+	actionSwitchLaunch  action = "switch-launch"
+	actionSwitchOnly    action = "switch-only"
+	actionUpdate        action = "update"
+	actionRefresh       action = "refresh"
+	actionAutoRefresh   action = "auto-refresh"
+	actionAutoSwitch    action = "auto-switch"
 	actionAutoThreshold action = "auto-threshold"
-	actionPrevious     action = "previous"
-	actionDoctor       action = "doctor"
-	actionQuit         action = "quit"
+	actionPrevious      action = "previous"
+	actionDoctor        action = "doctor"
+	actionQuit          action = "quit"
 )
 
 type commandItem struct {
 	Action      action
+	Icon        string
 	Label       string
 	Description string
+	Shortcut    string
 }
 
 var dashboardCommands = []commandItem{
-	{Action: actionSwitchLaunch, Label: "Switch + launch", Description: "Activate the selected account and start Antigravity"},
-	{Action: actionSwitchOnly, Label: "Switch only", Description: "Activate the selected account without launching"},
-	{Action: actionUpdate, Label: "Update profile", Description: "Save the current Antigravity credential into this profile"},
-	{Action: actionRefresh, Label: "Refresh quota", Description: "Bypass cache and fetch live model quota now"},
-	{Action: actionAutoRefresh, Label: "Auto refresh", Description: "Set refresh seconds; enter 0 to disable"},
-	{Action: actionAutoSwitch, Label: "Auto switch now", Description: "Apply the current quota recommendation without closing"},
-	{Action: actionAutoThreshold, Label: "Auto threshold", Description: "Set the switch threshold from 0 to 100 percent"},
-	{Action: actionPrevious, Label: "Previous account", Description: "Return to the previously active profile"},
-	{Action: actionDoctor, Label: "Run doctor", Description: "Check platform, keyring, paths and application state"},
-	{Action: actionQuit, Label: "Quit dashboard", Description: "Close agswitch without changing the account"},
+	{Action: actionHotReload, Icon: "⚡", Label: "Hot switch", Description: "Keep the Antigravity UI, files, chat and terminals open", Shortcut: "s"},
+	{Action: actionSwitchLaunch, Icon: "↻", Label: "Full restart", Description: "Restart Antigravity and clean old language servers"},
+	{Action: actionSwitchOnly, Icon: "○", Label: "Activate only", Description: "Change the keyring credential without starting Antigravity"},
+	{Action: actionUpdate, Icon: "↓", Label: "Sync profile", Description: "Save Antigravity's renewed active credential into this profile"},
+	{Action: actionRefresh, Icon: "⟳", Label: "Refresh quota", Description: "Fetch live model quota now", Shortcut: "r"},
+	{Action: actionAutoSwitch, Icon: "★", Label: "Auto hot-switch", Description: "Use the safest recent live-quota recommendation", Shortcut: "a"},
+	{Action: actionAutoThreshold, Icon: "%", Label: "Auto threshold", Description: "Choose when auto-switch becomes eligible", Shortcut: "A"},
+	{Action: actionAutoRefresh, Icon: "◷", Label: "Refresh timer", Description: "Set automatic live-quota refresh seconds", Shortcut: "R"},
+	{Action: actionPrevious, Icon: "←", Label: "Previous account", Description: "Return to the previously active profile", Shortcut: "p"},
+	{Action: actionDoctor, Icon: "✓", Label: "Run doctor", Description: "Check keyring, paths and process state", Shortcut: "d"},
+	{Action: actionQuit, Icon: "×", Label: "Quit", Description: "Close AGSwitch without changing accounts", Shortcut: "q"},
 }
 
 type Model struct {
@@ -85,22 +90,26 @@ type Model struct {
 	Results  []quota.Result
 	Decision autoswitch.Decision
 
-	SelectedAccount int
-	SelectedCommand int
-	Focus           focusArea
-	Search          string
-	Searching       bool
-	RefreshInput    string
-	EditingRefresh  bool
-	ThresholdInput  string
+	SelectedAccount  int
+	SelectedCommand  int
+	Focus            focusArea
+	Search           string
+	Searching        bool
+	RefreshInput     string
+	EditingRefresh   bool
+	ThresholdInput   string
 	EditingThreshold bool
-	Status          string
-	Details         string
-	Width           int
-	Height          int
-	Busy            bool
-	Initialized     bool
-	RefreshSequence uint64
+	ConfirmAction    action
+	ConfirmProfile   string
+	ConfirmTitle     string
+	ConfirmBody      string
+	Status           string
+	Details          string
+	Width            int
+	Height           int
+	Busy             bool
+	Initialized      bool
+	RefreshSequence  uint64
 }
 
 func New(ctx context.Context, backend Backend, options Options) Model {
@@ -199,9 +208,22 @@ func (m Model) loadDataCommand(refresh bool) tea.Cmd {
 
 func (m Model) operationCommand(selected action) tea.Cmd {
 	profile, hasProfile := m.selectedProfile()
+	if m.ConfirmProfile != "" {
+		profile = m.ConfirmProfile
+		hasProfile = true
+	}
 	return func() tea.Msg {
 		result := operationMsg{action: selected, profile: profile}
 		switch selected {
+		case actionHotReload:
+			if !hasProfile {
+				result.err = fmt.Errorf("select an account first")
+				return result
+			}
+			result.err = m.Backend.Use(m.Context, profile, switcher.Options{
+				LaunchMode: switcher.PreserveLaunchState,
+				HotReload:  true,
+			})
 		case actionSwitchLaunch:
 			if !hasProfile {
 				result.err = fmt.Errorf("select an account first")
@@ -223,10 +245,14 @@ func (m Model) operationCommand(selected action) tea.Cmd {
 		case actionAutoSwitch:
 			if !m.Decision.Switch || strings.TrimSpace(m.Decision.Selected.Profile) == "" {
 				result.details = m.Decision.Reason
+				result.profile = ""
 				return result
 			}
 			result.profile = m.Decision.Selected.Profile
-			result.err = m.Backend.Use(m.Context, result.profile, switcher.Options{LaunchMode: switcher.AlwaysLaunch})
+			result.err = m.Backend.Use(m.Context, result.profile, switcher.Options{
+				LaunchMode: switcher.PreserveLaunchState,
+				HotReload:  true,
+			})
 		case actionPrevious:
 			result.profile, result.err = m.Backend.Previous(m.Context)
 		case actionDoctor:
@@ -260,6 +286,19 @@ func (m Model) selectedProfile() (string, bool) {
 		index = 0
 	}
 	return filtered[index].ID, true
+}
+
+func (m Model) activeProfile() string {
+	for _, item := range m.Accounts {
+		if item.Active {
+			return item.ID
+		}
+	}
+	return ""
+}
+
+func (m Model) confirming() bool {
+	return m.ConfirmAction != ""
 }
 
 func (m Model) filteredAccounts() []account.Account {
