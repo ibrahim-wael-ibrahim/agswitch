@@ -144,6 +144,7 @@ func (m Model) beginConfirmation(selected action, profile string) (tea.Model, te
 		m.ConfirmBody = fmt.Sprintf("Run %s for %s?", selected, profile)
 	}
 	m.Status = "Confirmation required"
+	m.Details = m.ConfirmBody + "\n\nEnter / Y to continue. Esc / N to cancel."
 	return m, nil
 }
 
@@ -169,6 +170,7 @@ func (m *Model) clearConfirmation() {
 	m.ConfirmProfile = ""
 	m.ConfirmTitle = ""
 	m.ConfirmBody = ""
+	m.Details = ""
 	if m.Focus == focusConfirm {
 		m.Focus = focusCommands
 	}
