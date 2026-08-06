@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/ibrahim-wael/agswitch/internal/account"
+	"github.com/ibrahim-wael/agswitch/internal/autoswitch"
 	"github.com/ibrahim-wael/agswitch/internal/doctor"
 	"github.com/ibrahim-wael/agswitch/internal/quota"
 	"github.com/ibrahim-wael/agswitch/internal/switcher"
@@ -81,9 +82,9 @@ func TestHotSwitchRequiresConfirmation(t *testing.T) {
 func TestAutoSwitchUsesHotReloadAfterConfirmation(t *testing.T) {
 	backend := &hotReloadBackend{}
 	model := Model{
-		Context: backendContext(),
-		Backend: backend,
-		Decision: autoswitchDecision("work"),
+		Context:        context.Background(),
+		Backend:        backend,
+		Decision:       autoswitch.Decision{Switch: true, Selected: autoswitch.Candidate{Profile: "work"}},
 		ConfirmProfile: "work",
 	}
 	message := model.operationCommand(actionAutoSwitch)()
@@ -93,14 +94,5 @@ func TestAutoSwitchUsesHotReloadAfterConfirmation(t *testing.T) {
 	}
 	if !backend.options.HotReload || backend.profile != "work" {
 		t.Fatalf("profile=%q options=%#v", backend.profile, backend.options)
-	}
-}
-
-func backendContext() context.Context { return context.Background() }
-
-func autoswitchDecision(profile string) autoswitch.Decision {
-	return autoswitch.Decision{
-		Switch: true,
-		Selected: autoswitch.Candidate{Profile: profile},
 	}
 }
