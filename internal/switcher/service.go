@@ -4,8 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/ibrahim-wael/agswitch/internal/credentials"
 	"time"
+
+	"github.com/ibrahim-wael/agswitch/internal/credentials"
 )
 
 type ActiveStore interface {
@@ -20,6 +21,7 @@ type ProcessManager interface {
 	Stop(context.Context) error
 	Start(context.Context) error
 	Running(context.Context) (bool, error)
+	ReloadBackend(context.Context) error
 }
 type StateStore interface {
 	Commit(context.Context, string) error
@@ -38,6 +40,7 @@ const (
 type Options struct {
 	LaunchMode     LaunchMode
 	StartupTimeout time.Duration
+	HotReload      bool
 }
 type Service struct {
 	ActiveStore  ActiveStore
@@ -78,6 +81,9 @@ func (s Service) SwitchWithOptions(ctx context.Context, p string, o Options) (er
 	if e != nil {
 		return e
 	}
+	if o.HotReload && !was {
+		return errors.New("hot reload requires Antigravity to be running")
+	}
 	start := was
 	if o.LaunchMode == AlwaysLaunch {
 		start = true
@@ -89,12 +95,12 @@ func (s Service) SwitchWithOptions(ctx context.Context, p string, o Options) (er
 	changed, stopped, committed := false, false, false
 	defer func() {
 		if err != nil && !committed {
-			if r := s.rollback(ctx, prev, had, was, changed, stopped); r != nil {
+			if r := s.rollback(ctx, prev, had, was, changed, stopped, o.HotReload); r != nil {
 				err = errors.Join(err, r)
 			}
 		}
 	}()
-	if was {
+	if was && !o.HotReload {
 		if err = s.Process.Stop(ctx); err != nil {
 			return err
 		}
@@ -108,7 +114,11 @@ func (s Service) SwitchWithOptions(ctx context.Context, p string, o Options) (er
 	if e != nil || v.Fingerprint != sel.Fingerprint {
 		return errors.New("active credential verification failed")
 	}
-	if start {
+	if o.HotReload {
+		if err = s.Process.ReloadBackend(ctx); err != nil {
+			return fmt.Errorf("reload Antigravity language server: %w", err)
+		}
+	} else if start {
 		if err = s.Process.Start(ctx); err != nil {
 			return err
 		}
@@ -128,7 +138,7 @@ func (s Service) SwitchWithOptions(ctx context.Context, p string, o Options) (er
 	committed = true
 	return nil
 }
-func (s Service) rollback(ctx context.Context, p credentials.Credential, had, was, changed, stopped bool) error {
+func (s Service) rollback(ctx context.Context, p credentials.Credential, had, was, changed, stopped, hotReload bool) error {
 	var out error
 	if changed {
 		if had {
@@ -136,6 +146,10 @@ func (s Service) rollback(ctx context.Context, p credentials.Credential, had, wa
 		} else {
 			out = errors.Join(out, s.ActiveStore.Clear(ctx))
 		}
+	}
+	if hotReload && was && changed {
+		out = errors.Join(out, s.Process.ReloadBackend(ctx))
+		return out
 	}
 	running, e := s.Process.Running(ctx)
 	if e != nil {
