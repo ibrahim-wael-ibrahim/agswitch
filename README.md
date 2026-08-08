@@ -15,10 +15,13 @@ AGSwitch stores credentials in the operating-system keyring, tracks the active a
 - Transactional activation with verification and rollback.
 - Language-server-only hot switching that keeps the Electron UI, open files, chat and terminals alive.
 - Cleanup of orphan language servers after full application restarts.
+- Quota-first dashboard with the current five-hour reset window emphasized per account.
+- Startup live-quota sweep for every saved profile, bounded transient retries and one-minute refresh by default.
 - Safe quota-based recommendations: stale, warned, unknown or old quota never changes accounts.
 - Conservative overload classification: temporary provider overload never authorizes an account switch.
 - Bubble Tea v2 dashboard styled with Lip Gloss v2.
 - Semantic color states, dark/light themes and `NO_COLOR` support.
+- Dynamic build versions from Git tags or Git commit IDs.
 - JSON output, diagnostics and an upgrade-aware installer.
 
 ## Installation and updates
@@ -30,7 +33,7 @@ curl -fsSL https://raw.githubusercontent.com/ibrahim-wael-ibrahim/agswitch/maste
   | AGSWITCH_REF=master AGSWITCH_BUILD_FROM_SOURCE=true bash
 ```
 
-The installer builds the selected ref, validates the new binary and atomically replaces the existing installation. The previous binary is restored if validation fails.
+The installer builds the selected ref, stamps the binary with a version derived from Git metadata, validates the new binary and atomically replaces the existing installation. The previous binary is restored if validation fails.
 
 Useful installer variables:
 
@@ -40,6 +43,8 @@ Useful installer variables:
 | `AGSWITCH_REF` | Source branch or tag to build; default `master` |
 | `AGSWITCH_BUILD_FROM_SOURCE` | Set `true` to bypass releases and build the selected ref |
 | `BINDIR` | Binary destination; default `~/.local/bin` |
+
+Source builds from an exact Git tag display that tag, for example `v1.1.0`. Branch builds display a development version such as `v0.0.0-dev+07bbe637`. A plain local build without usable Git metadata falls back to `dev`; it never pretends to be the old fixed `v1.0.0` release.
 
 On Arch/Omarchy, the installer also maintains the desktop launcher, floating Hyprland rule and `SUPER+SHIFT+CTRL+A` shortcut.
 
@@ -83,7 +88,43 @@ or:
 agswitch tui
 ```
 
-The UI uses Bubble Tea for state and events and Lip Gloss for responsive layout, borders and semantic colors.
+The UI uses Bubble Tea for state and events and Lip Gloss for responsive layout, borders and semantic colors. The default layout is quota-first: saved accounts and their current five-hour availability are primary, while detailed per-model quota is hidden until requested with `m`.
+
+### Realtime quota sweep
+
+The dashboard does not wait for the five-minute cache on startup. It immediately requests fresh quota for every saved account concurrently.
+
+For transient provider/network failures it performs up to four startup attempts with short backoff delays. It does **not** spin forever on authentication failures such as an expired profile that cannot be refreshed; rapid repeated 401/403 requests would not repair that credential and could create unnecessary provider load.
+
+After startup, a full live sweep runs every 60 seconds by default. This includes profiles currently marked `AUTH`, so a profile automatically becomes `LIVE` on the next sweep after its saved credential becomes refreshable.
+
+Change the cadence:
+
+```bash
+agswitch tui --auto-refresh 30
+```
+
+Disable periodic refresh while keeping manual `r` refresh:
+
+```bash
+agswitch tui --auto-refresh 0
+```
+
+The header reports how many profiles currently have trusted live quota, for example:
+
+```text
+Live quota 4/6 accounts · 1 need auth · 1 will retry
+```
+
+### Five-hour and weekly display
+
+Google's model quota response currently provides `remainingFraction`, `resetTime` and `isExhausted` per model. AGSwitch groups the **actual reset times returned by the provider** instead of inventing counters:
+
+- a reset up to roughly six hours away is presented as the current **5 HOUR** window;
+- a reset farther away, up to roughly eight days, is presented as a **WEEKLY / long** window;
+- if no long reset is returned, the dashboard explicitly says that the provider did not expose a separate weekly window.
+
+Within each window the displayed percentage is the most constrained known model, which makes the account list useful for answering “which account is currently closest to exhaustion?”.
 
 ### Dashboard flow
 
@@ -91,7 +132,7 @@ The normal workflow is intentionally short:
 
 ```text
 select account
-→ press s for Hot switch
+→ press Enter or s for Hot switch
 → confirm Antigravity is idle
 → language server restarts
 → Electron UI stays open
@@ -104,9 +145,10 @@ Account badges:
 | Badge | Meaning |
 | --- | --- |
 | `LIVE` | Recent Google Cloud Code quota; eligible for recommendations |
-| `STALE` | Fallback cache or provider warning; display-only |
+| `AUTH` | Saved credential cannot currently obtain live quota; refresh/authentication needs attention |
+| `RETRY` | Temporary provider/network failure; startup backoff and periodic sweeps retry it |
+| `STALE` | Fallback cache/provider warning; display-only |
 | `OLD` | Previously live snapshot older than the safe age limit; display-only |
-| `ERROR` | Quota fetch failed |
 | `UNKNOWN` | No trustworthy quota value is available |
 
 Color semantics:
@@ -115,7 +157,8 @@ Color semantics:
 | --- | --- |
 | Green | Healthy/live state or high remaining quota |
 | Amber | Warning, stale data or medium remaining quota |
-| Red | Error or low remaining quota |
+| Red | Authentication/error state or low remaining quota |
+| Blue | Temporary/retry state |
 | Purple | Navigation, focus and selected actions |
 | Muted gray | Secondary or display-only information |
 
@@ -125,16 +168,15 @@ Quota bars use the same semantics: `<=20%` red, `21–50%` amber and `>50%` gree
 
 | Key | Action |
 | --- | --- |
-| `Tab`, `Shift-Tab`, arrows, `h/j/k/l` | Navigate panels and rows |
-| `s` | Hot switch selected account |
-| `Enter` | Select or run focused action |
+| `Up`, `Down`, `j`, `k` | Select account |
+| `Enter`, `s` | Hot switch selected account |
+| `f` | Full restart with selected account |
+| `u` | Sync Antigravity's renewed active credential into selected profile |
+| `o` | Activate selected credential without restarting Antigravity |
 | `/` | Search accounts |
-| `r` | Refresh quota now |
+| `r` | Run a live quota sweep for all saved accounts |
 | `a` | Preview/confirm auto hot-switch recommendation |
-| `A` | Edit auto-switch threshold |
-| `R` | Edit automatic refresh interval |
-| `p` | Previous account |
-| `d` | Run doctor |
+| `m` | Show/hide per-model quota details |
 | `q`, `Ctrl-C` | Quit |
 
 Hot switch and auto hot-switch always show a safety confirmation. Continue only after the current response and tool calls have finished.
@@ -200,7 +242,7 @@ acquire operation lock
 
 If backend replacement fails, AGSwitch restores the previous credential and reloads the backend again.
 
-The same path is available directly from the dashboard with `s`.
+The same path is available directly from the dashboard with `Enter` or `s`.
 
 ### Full restart
 
@@ -265,7 +307,7 @@ Google Cloud Code endpoints used by Antigravity are internal and may change.
 
 ### Authentication limitation
 
-Observed Antigravity credentials include access and refresh tokens but do not include the OAuth client credentials required to independently refresh every inactive profile.
+Observed Antigravity credentials can include access and refresh tokens without the OAuth client values needed to independently refresh every inactive profile. A profile with an expired access token may therefore appear as `AUTH` even while another profile is `LIVE`.
 
 Compatible client values may be supplied explicitly when obtained through a supported authentication flow:
 
@@ -274,7 +316,7 @@ export AGSWITCH_OAUTH_CLIENT_ID=...
 export AGSWITCH_OAUTH_CLIENT_SECRET=...
 ```
 
-Do not extract or publish secrets embedded in third-party binaries. Until a supported inactive-profile flow is available, activate an account through Antigravity so it renews the credential, then let AGSwitch synchronize the renewed payload.
+Do not extract or publish secrets embedded in third-party binaries. Until a supported inactive-profile flow is available, activate an account through Antigravity so it renews the credential, then let AGSwitch synchronize the renewed payload. The next dashboard sweep will retry that profile automatically.
 
 ## Safe auto-switch
 
@@ -376,6 +418,7 @@ Credential payloads remain in the operating-system keyring. Never commit tokens,
 ## Validation after upgrading
 
 ```bash
+agswitch version
 agswitch doctor
 agswitch current --json
 agswitch quota --refresh --json
@@ -387,6 +430,8 @@ Then, while no task is running, open the dashboard:
 ```bash
 agswitch
 ```
+
+Confirm that startup reports the live-account count and each saved profile has one of the explicit `LIVE`, `AUTH`, `RETRY`, `STALE`, `OLD` or `UNKNOWN` states. For a live profile, verify that the displayed five-hour percentage and reset countdown match the model data.
 
 Select a real profile and press `s`. Confirm that:
 
@@ -416,10 +461,10 @@ cmd/                 commands and dependency wiring
 internal/app/        profile lifecycle and self-healing identity
 internal/switcher/   transactional full and hot activation
 internal/process/    process, backend reload and orphan cleanup
-internal/quota/      provider, cache and freshness validation
+internal/quota/      provider, cache, reset-window summaries and freshness validation
 internal/autoswitch/ conservative candidate selection
 internal/monitor/    overload and quota incident classification
-internal/tui/        Bubble Tea + Lip Gloss dashboard
+internal/tui/        Bubble Tea + Lip Gloss dashboard and live refresh orchestration
 ```
 
 ## Platform status
