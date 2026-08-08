@@ -11,6 +11,8 @@ import (
 	"github.com/ibrahim-wael/agswitch/internal/quota"
 )
 
+const dashboardWidthSafety = 3
+
 // dashboardModel is the runtime presentation layer. It deliberately embeds the
 // existing Model so account/switching behavior stays in one place while the UI
 // can evolve independently.
@@ -111,9 +113,6 @@ func (m dashboardModel) View() tea.View {
 
 	var body string
 	if width >= 116 {
-		// Accounts need enough width for a name + state + five-hour summary, but
-		// the selected-account panel benefits more from extra room because auth
-		// and provider explanations are prose rather than columns.
 		accountsWidth := max(58, width*55/100)
 		detailWidth := max(50, width-accountsWidth-1)
 		panelHeight := min(max(accountsMin, 14), available)
@@ -181,11 +180,11 @@ func renderFriendlyAccounts(m Model, width, height int, theme tuiTheme) string {
 	}
 	lines = append(lines, theme.style(theme.Info).Bold(true).Render("/ Search")+theme.style(theme.Muted).Render(": "+searchValue))
 
-	contentWidth := max(12, width-6)
-	if contentWidth >= 58 {
+	rowWidth := dashboardContentWidth(width)
+	if rowWidth >= 54 {
 		leftHeader := "ACCOUNT"
-		rightHeader := "STATE / FIVE-HOUR"
-		gap := max(2, contentWidth-visibleWidth(leftHeader)-visibleWidth(rightHeader))
+		rightHeader := "STATUS / 5H RESET"
+		gap := max(2, rowWidth-visibleWidth(leftHeader)-visibleWidth(rightHeader))
 		lines = append(lines, theme.style(theme.Muted).Render(leftHeader+strings.Repeat(" ", gap)+rightHeader))
 	}
 
@@ -194,43 +193,61 @@ func renderFriendlyAccounts(m Model, width, height int, theme tuiTheme) string {
 	}
 	for index, item := range items {
 		result := m.resultFor(item.ID)
-		live, state := dashboardQuotaStatus(result, now)
-		windows := quota.SummarizeWindows(result.Snapshot, now)
-
-		active := "○"
-		if item.Active {
-			active = "●"
-		}
-		status := renderDashboardBadge(state, theme)
-		five := ""
-		if live && windows.FiveHour.Available {
-			five = renderWindowInline("5h", windows.FiveHour, now, theme)
-		} else if live {
-			if remaining, ok := quota.MinimumKnownRemaining(result.Snapshot); ok {
-				five = theme.style(quotaThemeColor(theme, remaining)).Bold(true).Render(fmt.Sprintf("%d%%", remaining))
+		line, plain := renderFriendlyAccountRow(item.ID, item.Active, result, rowWidth, now, theme)
+		if m.Decision.Switch && m.Decision.Selected.Profile == item.ID {
+			best := theme.style(theme.Warning).Bold(true).Render("★")
+			if visibleWidth(line)+2 <= rowWidth {
+				line = best + " " + line
+				plain = "★ " + plain
 			}
 		}
-
-		right := status
-		if five != "" {
-			right += "  " + five
-		}
-		// The box content area is width-6. Previous revisions budgeted against
-		// the outer width, causing the final badge to wrap onto a second line.
-		leftWidth := max(8, contentWidth-visibleWidth(right)-4)
-		name := trimWidth(item.ID, leftWidth)
-		leftPlain := active + " " + padRight(name, leftWidth)
-		plain := leftPlain + "  " + stripANSI(right)
-		line := theme.style(theme.Text).Render(active+" ") + theme.style(theme.Text).Bold(item.Active).Render(padRight(name, leftWidth)) + "  " + right
 		if m.Focus == focusAccounts && index == m.SelectedAccount {
-			line = selectedLine(theme, plain, contentWidth)
-		} else {
-			line = trimWidth(line, contentWidth)
+			line = selectedLine(theme, trimWidth(plain, rowWidth), rowWidth)
 		}
 		lines = append(lines, line)
 	}
 
 	return renderBoxWithTheme("Accounts · five-hour availability", strings.Join(lines, "\n"), width, height, m.Focus == focusAccounts || m.Focus == focusSearch, theme)
+}
+
+func renderFriendlyAccountRow(profile string, active bool, result quota.Result, rowWidth int, now time.Time, theme tuiTheme) (string, string) {
+	live, state := dashboardQuotaStatus(result, now)
+	windows := quota.SummarizeWindows(result.Snapshot, now)
+	marker := "○"
+	if active {
+		marker = "●"
+	}
+
+	rightPlain := "[" + state + "]"
+	rightStyled := renderDashboardBadge(state, theme)
+	if live && windows.FiveHour.Available {
+		windowPlain := compactWindowInline("5h", windows.FiveHour, now)
+		rightPlain += "  " + windowPlain
+		rightStyled += "  " + renderCompactWindowInline("5h", windows.FiveHour, now, theme)
+	} else if live {
+		if remaining, ok := quota.MinimumKnownRemaining(result.Snapshot); ok {
+			value := fmt.Sprintf("%d%%", remaining)
+			rightPlain += "  " + value
+			rightStyled += "  " + theme.style(quotaThemeColor(theme, remaining)).Bold(true).Render(value)
+		}
+	}
+
+	// Leave a small terminal-width safety margin. Some glyph/font combinations
+	// render one cell wider than Lip Gloss reports; filling a row to the exact
+	// border width caused the last reset fragment to wrap on real terminals.
+	rowWidth = max(12, rowWidth-dashboardWidthSafety)
+	leftWidth := max(8, rowWidth-visibleWidth(rightPlain)-4)
+	name := trimWidth(profile, leftWidth)
+	leftPlain := marker + " " + padRight(name, leftWidth)
+	plain := trimWidth(leftPlain+"  "+rightPlain, rowWidth)
+	styled := theme.style(theme.Text).Render(marker+" ") + theme.style(theme.Text).Bold(active).Render(padRight(name, leftWidth)) + "  " + rightStyled
+	return trimWidth(styled, rowWidth), plain
+}
+
+func dashboardContentWidth(outerWidth int) int {
+	// renderBoxWithTheme adds a rounded border and horizontal padding. Reserve a
+	// few extra cells so terminal-specific glyph widths never force hard wraps.
+	return max(12, outerWidth-9)
 }
 
 func renderDashboardBadge(state string, theme tuiTheme) string {
@@ -257,7 +274,7 @@ func renderAccountHealth(m Model, width, height int, theme tuiTheme) string {
 	now := time.Now().UTC()
 	live, state := dashboardQuotaStatus(result, now)
 	windows := quota.SummarizeWindows(result.Snapshot, now)
-	contentWidth := max(12, width-6)
+	contentWidth := dashboardContentWidth(width)
 
 	lines := []string{theme.style(theme.Text).Bold(true).Render(profile) + "  " + renderDashboardBadge(state, theme)}
 	for _, item := range m.Accounts {
@@ -265,6 +282,11 @@ func renderAccountHealth(m Model, width, height int, theme tuiTheme) string {
 			lines = append(lines, theme.style(theme.Muted).Render(trimWidth(item.Email, contentWidth)))
 			break
 		}
+	}
+
+	meta := quotaMetaLine(result, now)
+	if meta != "" {
+		lines = append(lines, theme.style(theme.Muted).Render(trimWidth(meta, contentWidth)))
 	}
 	lines = append(lines, "")
 
@@ -302,6 +324,21 @@ func renderAccountHealth(m Model, width, height int, theme tuiTheme) string {
 
 	lines = append(lines, "", theme.style(theme.Muted).Render(trimWidth("Enter/s switch · r refresh · a auto · m models", contentWidth)))
 	return renderBoxWithTheme("Selected account", strings.Join(lines, "\n"), width, height, false, theme)
+}
+
+func quotaMetaLine(result quota.Result, now time.Time) string {
+	parts := make([]string, 0, 3)
+	if !result.Snapshot.FetchedAt.IsZero() {
+		age := maxDuration(0, now.Sub(result.Snapshot.FetchedAt.UTC()))
+		parts = append(parts, "updated "+compactAge(age)+" ago")
+	}
+	if count := len(result.Snapshot.Models); count > 0 {
+		parts = append(parts, fmt.Sprintf("%d models", count))
+	}
+	if source := strings.TrimSpace(result.Snapshot.Source); source != "" {
+		parts = append(parts, source)
+	}
+	return strings.Join(parts, " · ")
 }
 
 func appendStyledWrapped(lines []string, text string, width int, style lipgloss.Style) []string {
@@ -357,16 +394,29 @@ func wrapPlainText(value string, width int) []string {
 	return lines
 }
 
-func renderWindowInline(label string, window quota.WindowSummary, now time.Time, theme tuiTheme) string {
+func renderCompactWindowInline(label string, window quota.WindowSummary, now time.Time, theme tuiTheme) string {
 	c := quotaThemeColor(theme, window.Remaining)
-	remaining := theme.style(c).Bold(true).Render(fmt.Sprintf("%s %d%%", label, window.Remaining))
+	value := fmt.Sprintf("%s %d%%", label, window.Remaining)
 	if window.Exhausted {
-		remaining = theme.style(theme.Danger).Bold(true).Render(label + " EXHAUSTED")
+		value = label + " EXHAUSTED"
+		c = theme.Danger
+	}
+	styled := theme.style(c).Bold(true).Render(value)
+	if window.ResetAt.IsZero() {
+		return styled
+	}
+	return styled + theme.style(theme.Muted).Render(" · "+compactResetDuration(maxDuration(0, window.ResetAt.Sub(now))))
+}
+
+func compactWindowInline(label string, window quota.WindowSummary, now time.Time) string {
+	value := fmt.Sprintf("%s %d%%", label, window.Remaining)
+	if window.Exhausted {
+		value = label + " EXHAUSTED"
 	}
 	if window.ResetAt.IsZero() {
-		return remaining
+		return value
 	}
-	return remaining + theme.style(theme.Muted).Render(" · "+compactDuration(maxDuration(0, window.ResetAt.Sub(now))))
+	return value + " · " + compactResetDuration(maxDuration(0, window.ResetAt.Sub(now)))
 }
 
 func renderWindowBlock(label string, window quota.WindowSummary, now time.Time, width int, theme tuiTheme) string {
@@ -393,42 +443,28 @@ func renderCompactModels(m Model, width, height int, theme tuiTheme) string {
 		return ""
 	}
 	result := m.resultFor(profile)
-	models := quota.SortedModels(result.Snapshot)
-	if len(models) == 0 {
+	allModels := quota.SortedModels(result.Snapshot)
+	if len(allModels) == 0 {
 		return renderBoxWithTheme("Model details", theme.style(theme.Muted).Render("No model quota returned."), width, height, false, theme)
 	}
 
-	contentWidth := max(16, width-6)
-	rowsAvailable := max(1, height-3)
+	contentWidth := dashboardContentWidth(width)
+	rowsAvailable := max(1, height-4)
 	columns := 1
 	if contentWidth >= 104 {
 		columns = 2
 	}
 	capacity := rowsAvailable * columns
-	shown := len(models)
-	if shown > capacity {
-		shown = capacity
-	}
-	models = models[:shown]
+	shown := min(len(allModels), capacity)
+	models := allModels[:shown]
 
 	cellWidth := contentWidth
 	if columns == 2 {
-		cellWidth = (contentWidth - 2) / 2
+		cellWidth = max(18, (contentWidth-5)/2)
 	}
 	entries := make([]string, 0, len(models))
 	for _, model := range models {
-		remaining := "unknown"
-		if model.Remaining >= 0 {
-			remaining = fmt.Sprintf("%d%%", model.Remaining)
-		}
-		reset := ""
-		if d := quota.ResetIn(model.ResetAt, time.Now()); d > 0 {
-			reset = " · " + compactDuration(d)
-		}
-		right := remaining + reset
-		nameWidth := max(8, cellWidth-visibleWidth(right)-1)
-		entry := padRight(trimWidth(model.Name, nameWidth), nameWidth) + " " + right
-		entries = append(entries, trimWidth(entry, cellWidth))
+		entries = append(entries, renderModelCell(model, cellWidth, time.Now()))
 	}
 
 	var body string
@@ -443,16 +479,60 @@ func renderCompactModels(m Model, width, height int, theme tuiTheme) string {
 			if row+rows < len(entries) {
 				right = entries[row+rows]
 			}
-			lines = append(lines, padRight(left, cellWidth)+"  "+right)
+			lines = append(lines, padRight(left, cellWidth)+"   "+right)
 		}
 		body = strings.Join(lines, "\n")
 	}
 
-	title := "Model details · m to hide"
-	if shown < len(quota.SortedModels(result.Snapshot)) {
-		title = fmt.Sprintf("Model details · %d/%d shown · m to hide", shown, len(quota.SortedModels(result.Snapshot)))
+	minText := "min unknown"
+	if remaining, ok := quota.MinimumKnownRemaining(result.Snapshot); ok {
+		minText = fmt.Sprintf("min %d%%", remaining)
 	}
+	windows := quota.SummarizeWindows(result.Snapshot, time.Now().UTC())
+	resetText := "reset unknown"
+	if windows.FiveHour.Available && !windows.FiveHour.ResetAt.IsZero() {
+		resetText = "5h reset " + compactResetDuration(maxDuration(0, windows.FiveHour.ResetAt.Sub(time.Now().UTC())))
+	}
+	title := fmt.Sprintf("Models · %d/%d · %s · %s · m hide", shown, len(allModels), minText, resetText)
 	return renderBoxWithTheme(title, body, width, height, false, theme)
+}
+
+func renderModelCell(model quota.ModelUsage, width int, now time.Time) string {
+	remaining := "—"
+	if model.Remaining >= 0 {
+		remaining = fmt.Sprintf("%d%%", model.Remaining)
+	}
+	reset := "—"
+	if d := quota.ResetIn(model.ResetAt, now); d > 0 {
+		reset = compactResetDuration(d)
+	}
+	right := remaining + "  " + reset
+	nameWidth := max(7, width-visibleWidth(right)-2)
+	name := trimWidth(model.Name, nameWidth)
+	return trimWidth(padRight(name, nameWidth)+"  "+right, width)
+}
+
+func compactResetDuration(value time.Duration) string {
+	if value < 0 {
+		value = 0
+	}
+	if value >= 24*time.Hour {
+		return fmt.Sprintf("%dd%02dh", int(value/(24*time.Hour)), int(value%(24*time.Hour)/time.Hour))
+	}
+	if value >= time.Hour {
+		return fmt.Sprintf("%dh%02dm", int(value/time.Hour), int(value%time.Hour/time.Minute))
+	}
+	if value >= time.Minute {
+		return fmt.Sprintf("%dm", max(1, int(value/time.Minute)))
+	}
+	return fmt.Sprintf("%ds", max(1, int(value/time.Second)))
+}
+
+func compactAge(value time.Duration) string {
+	if value < time.Minute {
+		return fmt.Sprintf("%ds", max(0, int(value/time.Second)))
+	}
+	return compactResetDuration(value)
 }
 
 func renderFriendlyHelp(width int, m dashboardModel, theme tuiTheme) string {
