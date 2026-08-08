@@ -131,6 +131,7 @@ func newRootCommand(dependencies *dependencies) *cobra.Command {
 		newDeleteCommand(dependencies),
 		newMigrateCommand(dependencies),
 		newQuotaCommand(dependencies),
+		newAuthCommand(dependencies),
 		newDoctorCommand(dependencies),
 		newConfigCommand(dependencies),
 		newVersionCommand(),
