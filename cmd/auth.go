@@ -13,10 +13,13 @@ import (
 func newAuthCommand(dependencies *dependencies) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "auth",
-		Short: "Inspect saved OAuth authentication safely",
+		Short: "Inspect and renew saved OAuth authentication safely",
 		Args:  cobra.NoArgs,
 	}
-	command.AddCommand(newAuthDoctorCommand(dependencies))
+	command.AddCommand(
+		newAuthDoctorCommand(dependencies),
+		newAuthRefreshViaAntigravityCommand(dependencies),
+	)
 	return command
 }
 
