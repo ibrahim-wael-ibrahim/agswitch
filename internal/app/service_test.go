@@ -3,9 +3,10 @@ package app
 import (
 	"context"
 	"errors"
+	"testing"
+
 	"github.com/ibrahim-wael/agswitch/internal/account"
 	"github.com/ibrahim-wael/agswitch/internal/credentials"
-	"testing"
 )
 
 type activeMemory struct{ value credentials.Credential }
@@ -52,7 +53,10 @@ func (m accountsMemory) Get(_ context.Context, id string) (account.Account, erro
 func (m accountsMemory) Save(_ context.Context, v account.Account) error { m[v.ID] = v; return nil }
 func (m accountsMemory) Delete(_ context.Context, id string) error       { delete(m, id); return nil }
 func TestSaveAndDetectCurrent(t *testing.T) {
-	c := credentials.New([]byte(`{"email":"person@example.com"}`))
+	c, err := credentials.Parse([]byte(`{"email":"person@example.com"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
 	p := profilesMemory{}
 	a := accountsMemory{}
 	s := Service{Active: activeMemory{c}, Profiles: p, Accounts: a}
@@ -65,5 +69,34 @@ func TestSaveAndDetectCurrent(t *testing.T) {
 	}
 	if err = s.Save(context.Background(), "work", false); !errors.Is(err, ErrProfileExists) {
 		t.Fatal(err)
+	}
+}
+
+func TestCurrentSurvivesAccessTokenRotation(t *testing.T) {
+	oldCredential, err := credentials.Parse([]byte(`{"token":{"access_token":"old","refresh_token":"stable","expiry":"2026-08-06T12:00:00Z"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	newCredential, err := credentials.Parse([]byte(`{"token":{"access_token":"new","refresh_token":"stable","expiry":"2026-08-06T13:00:00Z"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	profiles := profilesMemory{"work": oldCredential}
+	accounts := accountsMemory{"work": {
+		ID:                    "work",
+		CredentialFingerprint: oldCredential.Fingerprint,
+		IdentityFingerprint:   oldCredential.IdentityFingerprint,
+		QuotaEnabled:          true,
+	}}
+	service := Service{Active: activeMemory{newCredential}, Profiles: profiles, Accounts: accounts}
+	current, found, err := service.Current(context.Background())
+	if err != nil || !found || current.ID != "work" {
+		t.Fatalf("current=%#v found=%v err=%v", current, found, err)
+	}
+	if profiles["work"].Fingerprint != newCredential.Fingerprint {
+		t.Fatal("renewed active credential was not synced to the saved profile")
+	}
+	if accounts["work"].CredentialFingerprint != newCredential.Fingerprint {
+		t.Fatal("account metadata was not self-healed")
 	}
 }

@@ -2,193 +2,166 @@
 
 A secure account switcher and responsive terminal dashboard for Google Antigravity.
 
-AGSwitch stores saved credentials in the operating-system keyring, detects the active account by credential fingerprint, switches transactionally, displays model quota, and exposes both interactive and script-friendly workflows.
+AGSwitch stores credentials in the operating-system keyring, tracks the active account across access-token rotation, displays model quota, and switches accounts transactionally with rollback.
 
 **Author:** Ibrahim Wael  
-**GitHub:** `ibrahim-wael-ibrahim`  
 **Repository:** `github.com/ibrahim-wael-ibrahim/agswitch`
 
-## Features
+## Highlights
 
-- Responsive Bubble Tea dashboard with keyboard navigation.
-- Split layout for commands, account search and quota details.
-- Model quota displayed in one or two columns depending on terminal width.
-- Terminal-native styling using standard ANSI attributes instead of a fixed RGB palette.
-- Secure profile storage in Secret Service on Linux.
-- Transactional switching with lock, verification and rollback.
-- Account save, update, clone, rename, delete and migration workflows.
-- Cached concurrent quota retrieval with stale-cache fallback.
-- Conservative quota-based auto-switch recommendations.
-- JSON output for automation and integrations.
-- Environment diagnostics through `agswitch doctor`.
-- Tagged release binaries and a dependency-aware installer.
+- Secure saved profiles in Secret Service on Linux.
+- Stable account identity that survives renewed access tokens and expiry changes.
+- Automatic synchronization of a renewed active credential back to its saved profile.
+- Transactional activation with verification and rollback.
+- Language-server-only hot switching that keeps the Electron UI, open files, chat and terminals alive.
+- Cleanup of orphan language servers after full application restarts.
+- Safe quota-based recommendations: stale, warned, unknown or old quota never changes accounts.
+- Conservative overload classification: temporary provider overload never authorizes an account switch.
+- Bubble Tea v2 dashboard styled with Lip Gloss v2.
+- Semantic color states, dark/light themes and `NO_COLOR` support.
+- JSON output, diagnostics and an upgrade-aware installer.
 
-## Dashboard
+## Installation and updates
 
-Launch the dashboard with:
-
-```bash
-agswitch
-```
-
-or explicitly:
+Install or update from `master`:
 
 ```bash
-agswitch tui
+curl -fsSL https://raw.githubusercontent.com/ibrahim-wael-ibrahim/agswitch/master/scripts/install.sh \
+  | AGSWITCH_REF=master AGSWITCH_BUILD_FROM_SOURCE=true bash
 ```
 
-The upper half contains two responsive panels:
+The installer builds the selected ref, validates the new binary and atomically replaces the existing installation. The previous binary is restored if validation fails.
 
-1. **Program & Commands** — choose an operation and execute it inside AGSwitch.
-2. **Search & Accounts** — filter, select and inspect saved accounts.
+Useful installer variables:
 
-The lower half displays quota for the selected account. On wide terminals, models are displayed in two columns. On narrow terminals, panels and quota rows stack automatically.
-
-### Keyboard controls
-
-| Key | Action |
+| Variable | Purpose |
 | --- | --- |
-| `Tab`, `Left`, `Right`, `h`, `l` | Move between command and account panels |
-| `Up`, `Down`, `j`, `k` | Move inside the focused panel |
-| `/` | Search accounts |
-| `Enter` | Select an account or execute the selected command |
-| `r` | Refresh live quota |
-| `a` | Apply the auto-switch recommendation |
-| `p` | Switch to the previous account |
-| `d` | Run diagnostics |
-| `q`, `Ctrl-C` | Quit |
+| `AGSWITCH_VERSION` | Install a specific tagged release |
+| `AGSWITCH_REF` | Source branch or tag to build; default `master` |
+| `AGSWITCH_BUILD_FROM_SOURCE` | Set `true` to bypass releases and build the selected ref |
+| `BINDIR` | Binary destination; default `~/.local/bin` |
 
-The dashboard deliberately uses terminal defaults: bold, dim and reverse-video attributes. It does not impose a hard-coded color scheme, so it follows the palette configured in the terminal emulator.
+On Arch/Omarchy, the installer also maintains the desktop launcher, floating Hyprland rule and `SUPER+SHIFT+CTRL+A` shortcut.
 
-## Dashboard commands
-
-The command panel provides:
-
-- **Switch + launch** — activate the selected profile and start Antigravity.
-- **Switch only** — activate the selected profile without launching Antigravity.
-- **Update profile** — save the current Antigravity credential into the selected profile.
-- **Refresh quota** — bypass the five-minute quota cache.
-- **Auto switch** — apply the conservative recommendation.
-- **Previous account** — return to the previously active account.
-- **Run doctor** — inspect dependencies, storage and process state.
-- **Quit dashboard** — exit without changing accounts.
-
-## Installation
-
-### One-command installer
-
-From a cloned repository:
+Verify after updating:
 
 ```bash
-./scripts/install.sh
+agswitch version
+agswitch config
+agswitch doctor
+agswitch current --json
 ```
-
-Remote installer after the project is published on the default branch:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/ibrahim-wael-ibrahim/agswitch/master/scripts/install.sh | bash
-```
-
-The installer first attempts to download the matching release binary. If no compatible binary exists, it installs build dependencies and compiles from source.
-
-Override the installation location:
-
-```bash
-BINDIR="$HOME/bin" ./scripts/install.sh
-```
-
-Install a specific release:
-
-```bash
-AGSWITCH_VERSION=v0.1.0 ./scripts/install.sh
-```
-
-### Arch Linux
-
-The installer uses `pacman` and installs:
-
-```text
-ca-certificates curl git go libsecret procps-ng systemd
-```
-
-Manual setup:
-
-```bash
-sudo pacman -Sy --needed ca-certificates curl git go libsecret procps-ng systemd
-make check
-make install
-```
-
-### Fedora
-
-The installer uses `dnf` and installs:
-
-```text
-ca-certificates curl git golang libsecret procps-ng systemd
-```
-
-Manual setup:
-
-```bash
-sudo dnf install ca-certificates curl git golang libsecret procps-ng systemd
-make check
-make install
-```
-
-### Debian and Ubuntu
-
-The installer uses `apt-get` and installs:
-
-```text
-ca-certificates curl git golang-go libsecret-tools procps systemd
-```
-
-Manual setup:
-
-```bash
-sudo apt-get update
-sudo apt-get install ca-certificates curl git golang-go libsecret-tools procps systemd
-make check
-make install
-```
-
-### Windows
-
-The shell installer recognises Git Bash, MSYS2 and Cygwin. It can use `winget` or Chocolatey to install Git and Go, and it looks for a Windows release binary named:
-
-```text
-agswitch_windows_amd64.exe
-```
-
-Run from Git Bash:
-
-```bash
-./scripts/install.sh
-```
-
-**Support status:** the dashboard, account metadata, quota client and Windows Credential Manager dependency can be built through Go, but the Antigravity process-control adapter must be validated against the real Windows Antigravity executable before Windows is considered stable. Linux is the currently validated platform.
 
 ## First-time setup
 
-Run diagnostics:
-
 ```bash
 agswitch doctor
-```
-
-Import legacy JSON profiles:
-
-```bash
 agswitch migrate
 agswitch list
 agswitch current
 ```
 
-Do not delete source files until every migrated account has been tested. After validation:
+Save the currently authenticated Antigravity account:
 
 ```bash
-agswitch migrate --force --delete-source
+agswitch save work
 ```
+
+Repeat after signing Antigravity into each account you own.
+
+## Dashboard
+
+Open the dashboard with:
+
+```bash
+agswitch
+```
+
+or:
+
+```bash
+agswitch tui
+```
+
+The UI uses Bubble Tea for state and events and Lip Gloss for responsive layout, borders and semantic colors.
+
+### Dashboard flow
+
+The normal workflow is intentionally short:
+
+```text
+select account
+→ press s for Hot switch
+→ confirm Antigravity is idle
+→ language server restarts
+→ Electron UI stays open
+```
+
+The dashboard separates quota freshness from quota percentage. Old cached values remain visible for diagnostics, but they are clearly marked and cannot drive auto-switching.
+
+Account badges:
+
+| Badge | Meaning |
+| --- | --- |
+| `LIVE` | Recent Google Cloud Code quota; eligible for recommendations |
+| `STALE` | Fallback cache or provider warning; display-only |
+| `OLD` | Previously live snapshot older than the safe age limit; display-only |
+| `ERROR` | Quota fetch failed |
+| `UNKNOWN` | No trustworthy quota value is available |
+
+Color semantics:
+
+| Color | Meaning |
+| --- | --- |
+| Green | Healthy/live state or high remaining quota |
+| Amber | Warning, stale data or medium remaining quota |
+| Red | Error or low remaining quota |
+| Purple | Navigation, focus and selected actions |
+| Muted gray | Secondary or display-only information |
+
+Quota bars use the same semantics: `<=20%` red, `21–50%` amber and `>50%` green.
+
+### Keyboard shortcuts
+
+| Key | Action |
+| --- | --- |
+| `Tab`, `Shift-Tab`, arrows, `h/j/k/l` | Navigate panels and rows |
+| `s` | Hot switch selected account |
+| `Enter` | Select or run focused action |
+| `/` | Search accounts |
+| `r` | Refresh quota now |
+| `a` | Preview/confirm auto hot-switch recommendation |
+| `A` | Edit auto-switch threshold |
+| `R` | Edit automatic refresh interval |
+| `p` | Previous account |
+| `d` | Run doctor |
+| `q`, `Ctrl-C` | Quit |
+
+Hot switch and auto hot-switch always show a safety confirmation. Continue only after the current response and tool calls have finished.
+
+### Themes and colors
+
+The default theme is optimized for dark terminals.
+
+Force dark mode:
+
+```bash
+AGSWITCH_THEME=dark agswitch
+```
+
+Force light mode:
+
+```bash
+AGSWITCH_THEME=light agswitch
+```
+
+Disable colors while keeping the same layout:
+
+```bash
+NO_COLOR=1 agswitch
+```
+
+Lip Gloss automatically reduces colors when the terminal supports a smaller color profile.
 
 ## Account management
 
@@ -198,59 +171,78 @@ agswitch update work
 agswitch clone work work-backup
 agswitch rename work company
 agswitch info company
-agswitch info company --json
 agswitch list
-agswitch list --json
 agswitch current
-agswitch current --json
 agswitch detect
 agswitch delete company
 ```
 
-### Switching
+## Switching modes
 
-Preserve the current launch state:
+### Hot switch — recommended while Antigravity is open
+
+Wait until the current response and all tool calls have finished, then:
 
 ```bash
-agswitch use work
+agswitch use work --hot-reload --confirm-idle
 ```
 
-Always start Antigravity:
+The transaction is:
+
+```text
+acquire operation lock
+→ back up active credential
+→ write and verify selected credential
+→ stop old language-server generation
+→ wait for a new language-server PID
+→ commit current/previous account state
+```
+
+If backend replacement fails, AGSwitch restores the previous credential and reloads the backend again.
+
+The same path is available directly from the dashboard with `s`.
+
+### Full restart
 
 ```bash
 agswitch use work --restart
 ```
 
-Leave Antigravity stopped:
+AGSwitch closes Antigravity, removes related stale language-server processes, changes the credential and starts Antigravity again.
+
+### Preserve launch state
+
+```bash
+agswitch use work
+```
+
+### Switch without starting Antigravity
 
 ```bash
 agswitch use work --no-start
 ```
 
-Return to the previous profile:
+To target Antigravity IDE instead of standalone Antigravity, configure both paths before running AGSwitch:
 
 ```bash
-agswitch previous
+export AGSWITCH_APP_PATH=/opt/antigravity-ide/antigravity-ide
+export AGSWITCH_LANGUAGE_SERVER_PATH=/opt/antigravity-ide/resources/app/extensions/antigravity/bin/language_server_linux_x64
 ```
 
-## Transaction model
+The standalone backend path has been validated on Omarchy/Arch. IDE hot reload should be tested against each installed IDE version because it can run multiple language-server processes.
 
-A switch is performed as a transaction:
+## Stable account detection
 
-```text
-acquire operation lock
-→ validate selected profile
-→ back up the active credential
-→ detect application state
-→ stop Antigravity when required
-→ write the selected credential
-→ read it back and verify the fingerprint
-→ restore the requested launch state
-→ verify startup
-→ commit current/previous state
-```
+Antigravity renews access tokens and expiry fields. A raw hash of the complete credential therefore changes even when the Google account is unchanged.
 
-If activation or startup fails, AGSwitch attempts to restore the previous credential and process state.
+AGSwitch separates:
+
+- **Payload fingerprint:** verifies exact keyring writes and detects credential JSON changes.
+- **Identity fingerprint:** identifies the account using Google subject, then email, then a one-way value derived from the refresh token when those claims are absent.
+
+Raw identity material is never written to `accounts.json`. When the active payload rotates, `agswitch current` matches the stable identity and synchronizes the renewed credential into the saved profile.
+
+Existing metadata upgrades lazily; no manual migration is required.
 
 ## Quota
 
@@ -261,73 +253,116 @@ agswitch quota work
 agswitch quota --json
 ```
 
-Quota retrieval includes:
+Quota retrieval provides:
 
-- Bounded concurrent account requests.
-- Five-minute private cache.
-- Stale-cache fallback when the provider is unavailable.
-- Access-token usage and refresh support when compatible OAuth client data exists.
-- Endpoint fallback and response-size limits.
-- Unknown quota displayed as `unknown`, never invented as `0%`.
-- Duplicate display names grouped into variants using the lowest known quota.
+- bounded concurrent requests;
+- private local caching;
+- stale-cache fallback for visibility only;
+- model percentage, exhaustion state and reset time when returned by Google;
+- `unknown` rather than an invented percentage when quota cannot be trusted.
 
-Google Cloud Code quota endpoints are internal and may change without notice. The provider is isolated from the rest of the application so it can be updated independently.
+Google Cloud Code endpoints used by Antigravity are internal and may change.
 
-When Antigravity writes a renewed access token, update the saved profile:
+### Authentication limitation
 
-```bash
-agswitch use work --restart
-agswitch update work
-agswitch quota work --refresh
-```
+Observed Antigravity credentials include access and refresh tokens but do not include the OAuth client credentials required to independently refresh every inactive profile.
 
-Do not commit tokens, refresh tokens or OAuth client secrets.
-
-## Auto switch
-
-Preview the decision:
+Compatible client values may be supplied explicitly when obtained through a supported authentication flow:
 
 ```bash
-agswitch auto-switch --dry-run --refresh
+export AGSWITCH_OAUTH_CLIENT_ID=...
+export AGSWITCH_OAUTH_CLIENT_SECRET=...
 ```
 
-Choose a threshold:
+Do not extract or publish secrets embedded in third-party binaries. Until a supported inactive-profile flow is available, activate an account through Antigravity so it renews the credential, then let AGSwitch synchronize the renewed payload.
+
+## Safe auto-switch
+
+Preview:
 
 ```bash
-agswitch auto-switch --threshold 30 --dry-run
+agswitch auto-switch --refresh --dry-run
 ```
 
-Apply the recommendation while Antigravity is stopped:
+Keep the UI open after confirming the current task is idle:
 
 ```bash
-agswitch auto-switch --threshold 30 --refresh
+agswitch auto-switch --refresh --threshold 20 --hot-reload --confirm-idle
 ```
 
-Explicitly allow interruption when the application is running:
+Use a full application restart instead:
 
 ```bash
-agswitch auto-switch --threshold 30 --refresh --force-running
+agswitch auto-switch --refresh --threshold 20 --force-running
 ```
 
-The score for each account is its lowest known model quota. Accounts with failed or completely unknown quota are ignored. AGSwitch does not switch when the current account is above the threshold or when no better candidate exists.
+An account is eligible only when its snapshot:
+
+- came from `google-cloud-code`;
+- has no provider warning;
+- has a fetch timestamp;
+- is no older than two minutes;
+- contains at least one known model quota.
+
+`cache-stale` is display-only and can never trigger switching. If the active account is unknown or lacks recent live quota, AGSwitch refuses to switch rather than guessing.
+
+The candidate score is the lowest known remaining percentage across the account's models. AGSwitch switches only when the current account is at or below the configured threshold and another eligible account has a higher score.
+
+## Error classification
+
+The monitor classifier groups adjacent request logs conservatively:
+
+- `server_overloaded`: temporary provider overload; retry/backoff only, never switch account.
+- `resource_exhausted_ambiguous`: insufficient evidence; never switch account.
+- explicit quota exhaustion classes can inform future automation only when quota evidence is specific enough.
+
+The project does not intercept HTTPS requests, replace bearer tokens mid-request, or replay a failed request under another account.
+
+An unattended daemon remains intentionally disabled until a reliable whole-task idle signal and supported live quota for inactive profiles are available.
+
+## Process safety
+
+A full restart verifies that related old language-server processes are gone before considering the transaction complete.
+
+Hot reload stops the old backend generation and succeeds only after the old PIDs disappear and a replacement language-server PID appears.
+
+Display resolved process paths:
+
+```bash
+agswitch config
+```
+
+Relevant variables:
+
+| Variable | Purpose |
+| --- | --- |
+| `AGSWITCH_APP_PATH` | Electron application executable |
+| `AGSWITCH_LANGUAGE_SERVER_PATH` | Backend executable restarted during hot switching |
+| `AGSWITCH_QUIT_COMMAND` | Optional desktop-specific graceful quit command |
+| `AGSWITCH_GRACEFUL_TIMEOUT` | Shutdown timeout, for example `12s` |
+| `AGSWITCH_FORCE_KILL` | Set `false` to disable forced cleanup |
+| `AGSWITCH_OAUTH_CLIENT_ID` | Optional supported OAuth client ID |
+| `AGSWITCH_OAUTH_CLIENT_SECRET` | Optional supported OAuth client secret |
+| `AGSWITCH_THEME` | `dark` or `light` dashboard palette |
+| `NO_COLOR` | Disable dashboard colors when set |
 
 ## Storage and security
 
-### Active Antigravity credential
+Active Antigravity credential:
 
 ```text
 service=gemini
 username=antigravity
 ```
 
-### Saved profiles
+Saved profiles:
 
 ```text
 service=agswitch
 username=profile:<name>
 ```
 
-### Non-secret local files
+Private local files:
 
 ```text
 ~/.config/agswitch/accounts.json
@@ -336,45 +371,31 @@ username=profile:<name>
 ~/.cache/agswitch/quota.json
 ```
 
-Only metadata, state, logs and quota summaries are stored on disk. Saved credential payloads remain in the operating-system keyring.
+Credential payloads remain in the operating-system keyring. Never commit tokens, refresh tokens, cookies or OAuth client secrets.
 
-## Process shutdown
-
-Configure a tested desktop-specific graceful quit command when required:
+## Validation after upgrading
 
 ```bash
-export AGSWITCH_QUIT_COMMAND="$HOME/.config/agswitch/quit-antigravity"
+agswitch doctor
+agswitch current --json
+agswitch quota --refresh --json
+agswitch auto-switch --refresh --dry-run --json
 ```
 
-On Linux, the fallback detects the Antigravity process, sends `SIGTERM`, waits for shutdown and optionally uses `SIGKILL`. D-Bus tray services are diagnosed, but the exact Antigravity tray action remains desktop-specific.
-
-## Configuration
-
-Display resolved paths and settings:
+Then, while no task is running, open the dashboard:
 
 ```bash
-agswitch config
+agswitch
 ```
 
-Useful environment variables:
+Select a real profile and press `s`. Confirm that:
 
-| Variable | Purpose |
-| --- | --- |
-| `AGSWITCH_APP_PATH` | Antigravity executable path |
-| `AGSWITCH_QUIT_COMMAND` | Custom graceful shutdown command |
-| `AGSWITCH_GRACEFUL_TIMEOUT` | Shutdown timeout, such as `12s` |
-| `AGSWITCH_FORCE_KILL` | Set to `false` to disable forced termination |
-| `AGSWITCH_VERSION` | Release selected by the installer |
-| `BINDIR` | Installer/build destination |
-
-## Version and project identity
-
-```bash
-agswitch version
-agswitch version --json
-```
-
-The output includes the resolved version, author, repository and Go runtime version.
+- `agswitch current` reports the target profile;
+- the Electron window, open files, chat and terminals remain;
+- a simple new request succeeds;
+- the old language-server PID is gone;
+- a new language-server PID exists;
+- stale quota is visibly marked and never recommended.
 
 ## Development
 
@@ -388,54 +409,22 @@ make build
 make check
 ```
 
-Run the dashboard from source:
-
-```bash
-go run .
-```
-
-The main packages are separated by responsibility:
+Main packages:
 
 ```text
-cmd/                 Cobra commands and dependency wiring
-internal/app/        profile lifecycle operations
-internal/switcher/   transactional activation
-internal/process/    platform process adapters
-internal/keyring/    secure credential stores
-internal/quota/      provider, cache and formatting
-internal/autoswitch/ conservative selection policy
-internal/tui/        responsive Bubble Tea dashboard
+cmd/                 commands and dependency wiring
+internal/app/        profile lifecycle and self-healing identity
+internal/switcher/   transactional full and hot activation
+internal/process/    process, backend reload and orphan cleanup
+internal/quota/      provider, cache and freshness validation
+internal/autoswitch/ conservative candidate selection
+internal/monitor/    overload and quota incident classification
+internal/tui/        Bubble Tea + Lip Gloss dashboard
 ```
 
-## Release
+## Platform status
 
-Create a semantic-version tag:
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-The release workflow runs tests, builds supported architecture binaries, creates SHA-256 checksums and publishes GitHub release assets.
-
-## Uninstall
-
-```bash
-make uninstall
-```
-
-or:
-
-```bash
-./scripts/uninstall.sh
-```
-
-Uninstalling the binary does not automatically delete keyring profiles or user state.
-
-## Project status
-
-- Linux CLI, keyring storage, switching, migration and quota: validated.
-- Responsive interactive dashboard: implemented and covered by repository validation.
-- Arch, Fedora, Debian/Ubuntu installer flows: implemented.
-- Windows installer detection: implemented.
-- Windows Antigravity process integration: preview until validated on a real Windows installation.
+- Linux keyring, CLI, dashboard and full switching: validated.
+- Standalone language-server-only restart: validated on Omarchy/Arch.
+- Antigravity IDE backend path: configurable, but hot reload requires controlled testing per installed IDE version.
+- Windows process integration: preview.

@@ -35,6 +35,14 @@ func Parse(raw []byte) (Credential, error) {
 	credential.CredentialType = findString(value, map[string]struct{}{
 		"credential_type": {}, "type": {},
 	})
+	refreshToken := findNormalizedString(value, map[string]struct{}{
+		"refreshtoken": {}, "oauthrefreshtoken": {},
+	})
+	credential.IdentityFingerprint = IdentityFingerprint(
+		credential.Subject,
+		credential.Email,
+		refreshToken,
+	)
 	return credential, nil
 }
 
@@ -56,6 +64,31 @@ func findString(value any, keys map[string]struct{}) string {
 	case []any:
 		for _, child := range typed {
 			if result := findString(child, keys); result != "" {
+				return result
+			}
+		}
+	}
+	return ""
+}
+
+func findNormalizedString(value any, keys map[string]struct{}) string {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			if _, ok := keys[normalizeTokenKey(key)]; ok {
+				if text, ok := child.(string); ok && strings.TrimSpace(text) != "" {
+					return strings.TrimSpace(text)
+				}
+			}
+		}
+		for _, child := range typed {
+			if result := findNormalizedString(child, keys); result != "" {
+				return result
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if result := findNormalizedString(child, keys); result != "" {
 				return result
 			}
 		}

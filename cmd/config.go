@@ -2,14 +2,31 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/spf13/cobra"
 	"strings"
+
+	"github.com/spf13/cobra"
 )
 
 func newConfigCommand(d *dependencies) *cobra.Command {
-	return &cobra.Command{Use: "config", Short: "Display the resolved configuration", Args: cobra.NoArgs, RunE: func(c *cobra.Command, _ []string) error {
-		x := d.config
-		_, e := fmt.Fprintf(c.OutOrStdout(), "base_dir=%s\nstate_dir=%s\napp_path=%s\nlog_path=%s\nquit_command=%s\ngraceful_timeout=%s\nforce_kill=%t\n", x.BaseDir, x.StateDir, x.AppPath, x.LogPath, strings.Join(x.QuitCommand, " "), x.GracefulTimeout, x.ForceKill)
-		return e
-	}}
+	return &cobra.Command{
+		Use:   "config",
+		Short: "Display the resolved configuration",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			config := d.config
+			_, err := fmt.Fprintf(
+				command.OutOrStdout(),
+				"base_dir=%s\nstate_dir=%s\napp_path=%s\nlanguage_server_path=%s\nlog_path=%s\nquit_command=%s\ngraceful_timeout=%s\nforce_kill=%t\n",
+				config.BaseDir,
+				config.StateDir,
+				config.AppPath,
+				config.LanguageServerPath,
+				config.LogPath,
+				strings.Join(config.QuitCommand, " "),
+				config.GracefulTimeout,
+				config.ForceKill,
+			)
+			return err
+		},
+	}
 }

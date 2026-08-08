@@ -3,9 +3,10 @@ package switcher
 import (
 	"context"
 	"errors"
-	"github.com/ibrahim-wael/agswitch/internal/credentials"
 	"testing"
 	"time"
+
+	"github.com/ibrahim-wael/agswitch/internal/credentials"
 )
 
 type ma struct {
@@ -36,7 +37,12 @@ func (m mp) Load(_ context.Context, n string) (credentials.Credential, error) {
 	return v, nil
 }
 
-type fp struct{ running, fail bool }
+type fp struct {
+	running    bool
+	fail       bool
+	reloadFail bool
+	reloads    int
+}
 
 func (p *fp) Stop(context.Context) error { p.running = false; return nil }
 func (p *fp) Start(context.Context) error {
@@ -47,6 +53,14 @@ func (p *fp) Start(context.Context) error {
 	return nil
 }
 func (p *fp) Running(context.Context) (bool, error) { return p.running, nil }
+func (p *fp) ReloadBackend(context.Context) error {
+	p.reloads++
+	if p.reloadFail {
+		p.reloadFail = false
+		return errors.New("reload failed")
+	}
+	return nil
+}
 func TestRollback(t *testing.T) {
 	old := credentials.New([]byte(`{"a":1}`))
 	n := credentials.New([]byte(`{"a":2}`))
@@ -58,5 +72,22 @@ func TestRollback(t *testing.T) {
 	}
 	if a.c.Fingerprint != old.Fingerprint {
 		t.Fatal("not restored")
+	}
+}
+
+func TestHotReloadRollback(t *testing.T) {
+	old := credentials.New([]byte(`{"a":1}`))
+	n := credentials.New([]byte(`{"a":2}`))
+	a := &ma{old, true}
+	p := &fp{running: true, reloadFail: true}
+	s := Service{ActiveStore: a, ProfileStore: mp{"new": n}, Process: p}
+	if s.SwitchWithOptions(context.Background(), "new", Options{HotReload: true}) == nil {
+		t.Fatal("expected error")
+	}
+	if a.c.Fingerprint != old.Fingerprint {
+		t.Fatal("credential was not restored")
+	}
+	if p.reloads != 2 {
+		t.Fatalf("reloads = %d, want 2", p.reloads)
 	}
 }

@@ -43,7 +43,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.scheduleAutoRefresh()
 	case autoRefreshMsg:
-		if msg.sequence != m.RefreshSequence || m.Options.AutoRefresh <= 0 || m.Busy || m.Searching || m.EditingRefresh || m.EditingThreshold {
+		if msg.sequence != m.RefreshSequence || m.Options.AutoRefresh <= 0 || m.Busy || m.Searching || m.EditingRefresh || m.EditingThreshold || m.confirming() {
 			return m, nil
 		}
 		m.Busy = true
@@ -51,6 +51,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.loadDataCommand(true)
 	case operationMsg:
 		m.Busy = false
+		m.clearConfirmation()
 		if msg.err != nil {
 			m.Status = "Command failed: " + msg.err.Error()
 			return m, m.scheduleAutoRefresh()
@@ -70,12 +71,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		default:
 			if msg.profile != "" {
-				m.Status = fmt.Sprintf("Completed %s for %s", msg.action, msg.profile)
+				m.Status = successStatus(msg.action, msg.profile)
 			} else {
 				m.Status = "Command completed"
 			}
-			// Interactive auto-switch never exits the dashboard. Explicit launch can
-			// still honor ExitAfterSwitch for script-like invocations.
 			if m.Options.ExitAfterSwitch && msg.action == actionSwitchLaunch {
 				return m, tea.Quit
 			}
@@ -83,6 +82,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.loadDataCommand(false)
 		}
 	case tea.KeyMsg:
+		if m.confirming() {
+			return m.updateConfirmation(msg)
+		}
 		if m.EditingRefresh {
 			return m.updateRefreshInput(msg)
 		}
@@ -102,6 +104,76 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateNavigation(msg)
 	}
 	return m, nil
+}
+
+func successStatus(selected action, profile string) string {
+	switch selected {
+	case actionHotReload:
+		return fmt.Sprintf("Hot-switched backend to %s", profile)
+	case actionSwitchLaunch:
+		return fmt.Sprintf("Restarted Antigravity with %s", profile)
+	case actionSwitchOnly:
+		return fmt.Sprintf("Activated %s without launching", profile)
+	case actionAutoSwitch:
+		return fmt.Sprintf("Auto hot-switched to %s", profile)
+	case actionPrevious:
+		return fmt.Sprintf("Returned to %s", profile)
+	default:
+		return fmt.Sprintf("Completed %s for %s", selected, profile)
+	}
+}
+
+func (m Model) beginConfirmation(selected action, profile string) (tea.Model, tea.Cmd) {
+	if strings.TrimSpace(profile) == "" {
+		m.Status = "Select an account first"
+		return m, nil
+	}
+	m.ConfirmAction = selected
+	m.ConfirmProfile = profile
+	m.Focus = focusConfirm
+	m.RefreshSequence++
+	switch selected {
+	case actionHotReload:
+		m.ConfirmTitle = "Confirm hot switch"
+		m.ConfirmBody = fmt.Sprintf("Switch to %s and restart only the language server?\n\nContinue only after the current response and all tool calls have finished. The Antigravity window, files, chat and terminals should stay open.", profile)
+	case actionAutoSwitch:
+		m.ConfirmTitle = "Confirm auto hot-switch"
+		m.ConfirmBody = fmt.Sprintf("The safest recent live-quota candidate is %s.\n\nContinue only when Antigravity is idle. Stale, old, warned and unknown quota are excluded.", profile)
+	default:
+		m.ConfirmTitle = "Confirm action"
+		m.ConfirmBody = fmt.Sprintf("Run %s for %s?", selected, profile)
+	}
+	m.Status = "Confirmation required"
+	m.Details = m.ConfirmBody + "\n\nEnter / Y to continue. Esc / N to cancel."
+	return m, nil
+}
+
+func (m Model) updateConfirmation(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter", "y", "Y":
+		action := m.ConfirmAction
+		m.Busy = true
+		m.Status = "Applying " + strings.ToLower(m.ConfirmTitle) + "..."
+		return m, m.operationCommand(action)
+	case "esc", "n", "N":
+		m.clearConfirmation()
+		m.Status = "Action cancelled"
+		return m, m.scheduleAutoRefresh()
+	case "q", "ctrl+c":
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
+func (m *Model) clearConfirmation() {
+	m.ConfirmAction = ""
+	m.ConfirmProfile = ""
+	m.ConfirmTitle = ""
+	m.ConfirmBody = ""
+	m.Details = ""
+	if m.Focus == focusConfirm {
+		m.Focus = focusCommands
+	}
 }
 
 func (m Model) updateSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -159,7 +231,7 @@ func (m Model) updateRefreshInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.Status = fmt.Sprintf("Auto refresh set to every %d seconds", seconds)
-		m.Details = fmt.Sprintf("Quota will refresh automatically every %d seconds. Select Auto refresh again or press R to change it.", seconds)
+		m.Details = fmt.Sprintf("Quota will refresh automatically every %d seconds. Select Refresh timer again or press R to change it.", seconds)
 		return m, m.scheduleAutoRefresh()
 	case "backspace":
 		if m.RefreshInput != "" {
@@ -195,7 +267,7 @@ func (m Model) updateThresholdInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.EditingThreshold = false
 		m.Focus = focusCommands
 		m.Status = fmt.Sprintf("Auto-switch threshold set to %d%%", threshold)
-		m.Details = "Press a to apply the recommendation now. The dashboard stays open after switching."
+		m.Details = "Press a to preview and confirm the recommendation. Auto hot-switch only uses recent live quota."
 		m.Busy = true
 		return m, m.loadDataCommand(false)
 	case "backspace":
@@ -237,6 +309,46 @@ func (m Model) beginThresholdInput() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) autoSwitchRequested() (tea.Model, tea.Cmd) {
+	if !m.Decision.Switch || strings.TrimSpace(m.Decision.Selected.Profile) == "" {
+		m.Status = "No automatic switch is needed"
+		m.Details = m.Decision.Reason
+		return m, nil
+	}
+	return m.beginConfirmation(actionAutoSwitch, m.Decision.Selected.Profile)
+}
+
+func (m Model) runSelectedAction(selected action) (tea.Model, tea.Cmd) {
+	if selected == actionQuit {
+		return m, tea.Quit
+	}
+	if selected == actionRefresh {
+		m.Busy = true
+		m.Status = "Refreshing live quota..."
+		return m, m.loadDataCommand(true)
+	}
+	if selected == actionAutoRefresh {
+		return m.beginRefreshInput()
+	}
+	if selected == actionAutoThreshold {
+		return m.beginThresholdInput()
+	}
+	if selected == actionAutoSwitch {
+		return m.autoSwitchRequested()
+	}
+	if selected == actionHotReload {
+		profile, ok := m.selectedProfile()
+		if !ok {
+			m.Status = "Select an account first"
+			return m, nil
+		}
+		return m.beginConfirmation(actionHotReload, profile)
+	}
+	m.Busy = true
+	m.Status = "Running " + strings.ToLower(dashboardCommands[m.SelectedCommand].Label) + "..."
+	return m, m.operationCommand(selected)
+}
+
 func (m Model) updateNavigation(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "ctrl+c":
@@ -276,28 +388,18 @@ func (m Model) updateNavigation(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "enter":
 		if m.Focus == focusCommands {
-			selected := dashboardCommands[m.SelectedCommand].Action
-			if selected == actionQuit {
-				return m, tea.Quit
-			}
-			if selected == actionRefresh {
-				m.Busy = true
-				m.Status = "Refreshing live quota..."
-				return m, m.loadDataCommand(true)
-			}
-			if selected == actionAutoRefresh {
-				return m.beginRefreshInput()
-			}
-			if selected == actionAutoThreshold {
-				return m.beginThresholdInput()
-			}
-			m.Busy = true
-			m.Status = "Running " + strings.ToLower(dashboardCommands[m.SelectedCommand].Label) + "..."
-			return m, m.operationCommand(selected)
+			return m.runSelectedAction(dashboardCommands[m.SelectedCommand].Action)
 		}
 		m.Focus = focusCommands
 		m.SelectedCommand = 0
-		m.Status = "Account selected; choose a command and press Enter"
+		m.Status = "Account selected; choose an action and press Enter"
+	case "s":
+		profile, ok := m.selectedProfile()
+		if !ok {
+			m.Status = "Select an account first"
+			return m, nil
+		}
+		return m.beginConfirmation(actionHotReload, profile)
 	case "r":
 		m.Busy = true
 		m.Status = "Refreshing live quota..."
@@ -307,9 +409,7 @@ func (m Model) updateNavigation(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "A":
 		return m.beginThresholdInput()
 	case "a":
-		m.Busy = true
-		m.Status = "Applying auto-switch recommendation..."
-		return m, m.operationCommand(actionAutoSwitch)
+		return m.autoSwitchRequested()
 	case "p":
 		m.Busy = true
 		m.Status = "Switching to previous account..."

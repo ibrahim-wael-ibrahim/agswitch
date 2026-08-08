@@ -2,115 +2,173 @@ package tui
 
 import (
 	"fmt"
+	"image/color"
 	"os"
 	"strings"
 	"time"
 	"unicode"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/ibrahim-wael/agswitch/internal/brand"
 	"github.com/ibrahim-wael/agswitch/internal/quota"
 )
 
-const (
-	reset   = "\033[0m"
-	bold    = "\033[1m"
-	dim     = "\033[2m"
-	reverse = "\033[7m"
-	cyan    = "\033[36m"
-	green   = "\033[32m"
-	yellow  = "\033[33m"
-	red     = "\033[31m"
-	blue    = "\033[34m"
-)
+type tuiTheme struct {
+	Accent        color.Color
+	AccentSoft    color.Color
+	Success       color.Color
+	Warning       color.Color
+	Danger        color.Color
+	Info          color.Color
+	Text          color.Color
+	Muted         color.Color
+	Border        color.Color
+	Surface       color.Color
+	SelectedBG    color.Color
+	SelectedText  color.Color
+	ColorsEnabled bool
+}
+
+func currentTheme() tuiTheme {
+	mode := strings.ToLower(strings.TrimSpace(os.Getenv("AGSWITCH_THEME")))
+	dark := mode != "light"
+	pick := lipgloss.LightDark(dark)
+	colors := os.Getenv("NO_COLOR") == "" && strings.ToLower(os.Getenv("TERM")) != "dumb"
+	return tuiTheme{
+		Accent:        pick(lipgloss.Color("#5B21B6"), lipgloss.Color("#A78BFA")),
+		AccentSoft:    pick(lipgloss.Color("#EDE9FE"), lipgloss.Color("#2E1065")),
+		Success:       pick(lipgloss.Color("#047857"), lipgloss.Color("#34D399")),
+		Warning:       pick(lipgloss.Color("#B45309"), lipgloss.Color("#FBBF24")),
+		Danger:        pick(lipgloss.Color("#B91C1C"), lipgloss.Color("#F87171")),
+		Info:          pick(lipgloss.Color("#0369A1"), lipgloss.Color("#38BDF8")),
+		Text:          pick(lipgloss.Color("#111827"), lipgloss.Color("#F8FAFC")),
+		Muted:         pick(lipgloss.Color("#6B7280"), lipgloss.Color("#94A3B8")),
+		Border:        pick(lipgloss.Color("#D1D5DB"), lipgloss.Color("#334155")),
+		Surface:       pick(lipgloss.Color("#F8FAFC"), lipgloss.Color("#0F172A")),
+		SelectedBG:    pick(lipgloss.Color("#DDD6FE"), lipgloss.Color("#4C1D95")),
+		SelectedText:  pick(lipgloss.Color("#2E1065"), lipgloss.Color("#FFFFFF")),
+		ColorsEnabled: colors,
+	}
+}
+
+func (t tuiTheme) style(c color.Color) lipgloss.Style {
+	s := lipgloss.NewStyle()
+	if t.ColorsEnabled {
+		s = s.Foreground(c)
+	}
+	return s
+}
 
 func (m Model) View() tea.View {
-	width := m.Width
+	width, height := m.Width, m.Height
 	if width <= 0 {
-		width = 100
+		width = 110
 	}
-	height := m.Height
 	if height <= 0 {
-		height = 32
+		height = 34
 	}
-	contentWidth := max(40, width-2)
+	width = max(42, width-2)
+	theme := currentTheme()
 
-	var output strings.Builder
-	output.WriteString(renderHeader(contentWidth, m))
-	output.WriteByte('\n')
+	parts := []string{renderHeaderWithTheme(width, m, theme)}
+	if m.confirming() {
+		parts = append(parts, renderConfirmationPanelWithTheme(m, width, min(max(9, height-8), 13), theme))
+		parts = append(parts, renderHelpWithTheme(m, width, theme))
+		view := tea.NewView(strings.Join(parts, "\n"))
+		view.AltScreen = true
+		return view
+	}
 
-	commandHeight := min(max(len(dashboardCommands)+2, 9), 14)
-	accountHeight := min(max(len(m.filteredAccounts())*2+3, 9), 14)
+	commandHeight := min(max(len(dashboardCommands)+2, 12), 16)
+	accountHeight := min(max(len(m.filteredAccounts())*2+3, 12), 16)
 	topHeight := max(commandHeight, accountHeight)
-	if contentWidth >= 92 {
-		leftWidth := contentWidth/2 - 1
-		rightWidth := contentWidth - leftWidth - 1
-		output.WriteString(joinColumns(
-			renderCommandPanel(m, leftWidth, topHeight),
-			renderAccountPanel(m, rightWidth, topHeight),
-			leftWidth,
-			rightWidth,
+	if width >= 94 {
+		leftWidth := width/2 - 1
+		rightWidth := width - leftWidth - 1
+		parts = append(parts, lipgloss.JoinHorizontal(
+			lipgloss.Top,
+			renderCommandPanelWithTheme(m, leftWidth, topHeight, theme),
+			" ",
+			renderAccountPanelWithTheme(m, rightWidth, topHeight, theme),
 		))
 	} else {
-		output.WriteString(renderCommandPanel(m, contentWidth, commandHeight))
-		output.WriteByte('\n')
-		output.WriteString(renderAccountPanel(m, contentWidth, accountHeight))
+		parts = append(parts, renderAccountPanelWithTheme(m, width, accountHeight, theme))
+		parts = append(parts, renderCommandPanelWithTheme(m, width, commandHeight, theme))
 		topHeight = commandHeight + accountHeight + 1
 	}
 
-	output.WriteByte('\n')
-	reserved := topHeight + 7
+	reserved := topHeight + 9
 	if strings.TrimSpace(m.Details) != "" {
 		reserved += 6
 	}
-	quotaHeight := min(max(7, height-reserved), 14)
-	output.WriteString(renderQuotaPanel(m, contentWidth, quotaHeight))
+	parts = append(parts, renderQuotaPanelWithTheme(m, width, min(max(7, height-reserved), 15), theme))
 	if strings.TrimSpace(m.Details) != "" {
-		output.WriteByte('\n')
-		output.WriteString(renderBox("Details", truncateLines(m.Details, 4, contentWidth-4), contentWidth, 6, false))
+		parts = append(parts, renderBoxWithTheme("Details", truncateLines(m.Details, 4, width-6), width, 6, false, theme))
 	}
-	output.WriteByte('\n')
-	output.WriteString(renderHelp(m, contentWidth))
+	parts = append(parts, renderHelpWithTheme(m, width, theme))
 
-	view := tea.NewView(output.String())
+	view := tea.NewView(strings.Join(parts, "\n"))
 	view.AltScreen = true
 	return view
 }
 
 func renderHeader(width int, m Model) string {
-	version := brand.VersionLabel(m.Options.Version)
+	return renderHeaderWithTheme(width, m, currentTheme())
+}
+
+func renderHeaderWithTheme(width int, m Model, theme tuiTheme) string {
+	active := m.activeProfile()
+	if active == "" {
+		active = "unknown"
+	}
 	refresh := "manual"
 	if m.Options.AutoRefresh > 0 {
-		refresh = fmt.Sprintf("every %s", compactDuration(m.Options.AutoRefresh))
+		refresh = "every " + compactDuration(m.Options.AutoRefresh)
 	}
-	busy := ""
-	statusColor := green
+
+	title := theme.style(theme.Accent).Bold(true).Render("AGSwitch " + brand.VersionLabel(m.Options.Version))
+	subtitle := theme.style(theme.Muted).Render("safe Antigravity account control")
+	line1 := title + "  " + subtitle
+
+	statusColor := theme.Success
+	statusIcon := "●"
 	if m.Busy {
-		busy = " · working"
-		statusColor = yellow
+		statusColor = theme.Warning
+		statusIcon = "◌"
 	}
-	if strings.Contains(strings.ToLower(m.Status), "failed") || strings.Contains(strings.ToLower(m.Status), "error") {
-		statusColor = red
+	low := strings.ToLower(m.Status)
+	if strings.Contains(low, "failed") || strings.Contains(low, "error") {
+		statusColor = theme.Danger
+		statusIcon = "!"
 	}
-	line1 := paint(cyan, bold+"AGSwitch "+version+reset) + "  " + dim + "by " + brand.Author + " · " + brand.Repository + reset
-	line2 := fmt.Sprintf("%sStatus:%s %s%s%s  %sRefresh:%s %s  %sAuto switch:%s %d%%",
-		bold, reset, paint(statusColor, sanitizeTerminalText(m.Status)), busy, reset,
-		bold, reset, refresh,
-		bold, reset, m.Options.AutoThreshold,
-	)
+	status := theme.style(statusColor).Bold(true).Render(statusIcon + " " + sanitizeTerminalText(m.Status))
+	accountChip := chip(theme, "ACCOUNT", active, theme.Accent)
+	refreshChip := chip(theme, "REFRESH", refresh, theme.Info)
+	thresholdChip := chip(theme, "AUTO", fmt.Sprintf("%d%%", m.Options.AutoThreshold), theme.Warning)
+	line2 := lipgloss.JoinHorizontal(lipgloss.Center, accountChip, "  ", refreshChip, "  ", thresholdChip)
+
 	if m.EditingRefresh {
-		line2 = fmt.Sprintf("%sAuto refresh seconds:%s %s_  %s(0 disables · Enter save · Esc cancel)%s",
-			bold, reset, m.RefreshInput, dim, reset)
+		line2 = theme.style(theme.Info).Bold(true).Render("Refresh timer: "+m.RefreshInput+"s_") + theme.style(theme.Muted).Render("  Enter save · Esc cancel")
 	}
 	if m.EditingThreshold {
-		line2 = fmt.Sprintf("%sAuto-switch threshold:%s %s%%_  %s(0–100 · Enter save · Esc cancel)%s",
-			bold, reset, m.ThresholdInput, dim, reset)
+		line2 = theme.style(theme.Warning).Bold(true).Render("Auto-switch threshold: "+m.ThresholdInput+"%_") + theme.style(theme.Muted).Render("  Enter save · Esc cancel")
 	}
-	return trimWidth(line1, width) + "\n" + trimWidth(line2, width)
+	return trimWidth(line1, width) + "\n" + trimWidth(line2, width) + "\n" + trimWidth(status, width)
+}
+
+func chip(theme tuiTheme, label, value string, c color.Color) string {
+	labelStyle := theme.style(theme.Muted).Bold(true)
+	valueStyle := theme.style(c).Bold(true)
+	return labelStyle.Render(label+":") + " " + valueStyle.Render(value)
 }
 
 func renderCommandPanel(m Model, width, height int) string {
+	return renderCommandPanelWithTheme(m, width, height, currentTheme())
+}
+
+func renderCommandPanelWithTheme(m Model, width, height int, theme tuiTheme) string {
 	lines := make([]string, 0, len(dashboardCommands))
 	for index, command := range dashboardCommands {
 		description := command.Description
@@ -122,84 +180,173 @@ func renderCommandPanel(m Model, width, height int) string {
 				description = "Every " + compactDuration(m.Options.AutoRefresh) + " · Enter to change"
 			}
 		case actionAutoSwitch:
-			description = "Apply recommendation now · dashboard stays open"
+			if m.Decision.Switch {
+				description = "Recommended: " + m.Decision.Selected.Profile
+			} else {
+				description = m.Decision.Reason
+			}
 		case actionAutoThreshold:
 			description = fmt.Sprintf("Current %d%% · Enter to change", m.Options.AutoThreshold)
 		}
-		line := fmt.Sprintf("  %-18s %s", command.Label, description)
+		shortcut := ""
+		if command.Shortcut != "" {
+			shortcut = theme.style(theme.Accent).Bold(true).Render("[" + command.Shortcut + "]") + " "
+		}
+		iconStyle := theme.style(theme.Accent)
+		if command.Action == actionHotReload || command.Action == actionAutoSwitch {
+			iconStyle = theme.style(theme.Success).Bold(true)
+		}
+		line := fmt.Sprintf("%s %s%-16s %s", iconStyle.Render(command.Icon), shortcut, command.Label, theme.style(theme.Muted).Render(description))
 		if m.Focus == focusCommands && index == m.SelectedCommand {
-			line = reverse + trimWidth(line, width-4) + reset
+			line = selectedLine(theme, trimWidth(stripANSI(line), width-6), width-6)
 		}
 		lines = append(lines, line)
 	}
 	focused := m.Focus == focusCommands || m.Focus == focusRefreshInput || m.Focus == focusThresholdInput
-	return renderBox("Program & Commands", strings.Join(lines, "\n"), width, height, focused)
+	return renderBoxWithTheme("Actions", strings.Join(lines, "\n"), width, height, focused, theme)
 }
 
 func renderAccountPanel(m Model, width, height int) string {
-	query := m.Search
+	return renderAccountPanelWithTheme(m, width, height, currentTheme())
+}
+
+func renderAccountPanelWithTheme(m Model, width, height int, theme tuiTheme) string {
 	cursor := ""
 	if m.Searching {
 		cursor = "_"
 	}
-	lines := []string{paint(blue, "Search:") + " " + query + cursor}
+	search := theme.style(theme.Info).Bold(true).Render("Search") + theme.style(theme.Muted).Render(": "+m.Search+cursor)
+	lines := []string{search}
 	items := m.filteredAccounts()
+	now := time.Now()
 	if len(items) == 0 {
-		lines = append(lines, dim+"No matching accounts"+reset)
+		lines = append(lines, theme.style(theme.Muted).Render("No matching accounts"))
 	}
 	for index, item := range items {
-		active := "○"
+		active := theme.style(theme.Muted).Render("○")
 		if item.Active {
-			active = paint(green, "●")
+			active = theme.style(theme.Success).Bold(true).Render("●")
 		}
-		score := "unknown"
-		scoreColor := dim
-		if remaining, ok := quota.MinimumKnownRemaining(m.resultFor(item.ID).Snapshot); ok {
-			score = fmt.Sprintf("%d%%", remaining)
-			scoreColor = quotaColor(remaining)
+		result := m.resultFor(item.ID)
+		live, state := quotaStatus(result, now)
+		badge := renderQuotaBadgeWithTheme(state, theme)
+		score := ""
+		if live {
+			if remaining, ok := quota.MinimumKnownRemaining(result.Snapshot); ok {
+				score = " " + theme.style(quotaThemeColor(theme, remaining)).Bold(true).Render(fmt.Sprintf("%d%%", remaining))
+			}
 		}
 		recommended := ""
-		if m.Decision.Selected.Profile == item.ID {
-			recommended = "  " + paint(yellow, "★ best")
+		if m.Decision.Switch && m.Decision.Selected.Profile == item.ID {
+			recommended = " " + theme.style(theme.Warning).Bold(true).Render("★ BEST")
 		}
-		primaryWidth := max(8, width-visibleWidth(score)-visibleWidth(recommended)-9)
-		primary := fmt.Sprintf("%s %s  %s%s", active, padRight(trimWidth(item.ID, primaryWidth), primaryWidth), paint(scoreColor, score), recommended)
+		nameWidth := max(8, width-visibleWidth(badge)-visibleWidth(score)-visibleWidth(recommended)-12)
+		primaryPlain := fmt.Sprintf("%s %s", stripANSI(active), padRight(item.ID, nameWidth))
+		primary := active + " " + theme.style(theme.Text).Bold(item.Active).Render(padRight(trimWidth(item.ID, nameWidth), nameWidth)) + "  " + badge + score + recommended
 		email := strings.TrimSpace(item.Email)
 		if email == "" || email == item.ID {
 			email = "No email metadata"
 		}
-		secondary := "    " + dim + trimWidth(email, width-8) + reset
+		secondary := "  " + theme.style(theme.Muted).Render(trimWidth(email, width-8))
 		if m.Focus == focusAccounts && index == m.SelectedAccount {
-			primary = reverse + trimWidth(primary, width-4) + reset
-			secondary = reverse + trimWidth("    "+email, width-4) + reset
+			primary = selectedLine(theme, primaryPlain+"  "+state+stripANSI(score)+stripANSI(recommended), width-6)
+			secondary = selectedLine(theme, "  "+email, width-6)
 		}
 		lines = append(lines, primary, secondary)
 	}
-	return renderBox("Search & Accounts", strings.Join(lines, "\n"), width, height, m.Focus == focusAccounts || m.Focus == focusSearch)
+	focused := m.Focus == focusAccounts || m.Focus == focusSearch
+	return renderBoxWithTheme("Accounts", strings.Join(lines, "\n"), width, height, focused, theme)
+}
+
+func selectedLine(theme tuiTheme, text string, width int) string {
+	style := lipgloss.NewStyle().Bold(true)
+	if theme.ColorsEnabled {
+		style = style.Foreground(theme.SelectedText).Background(theme.SelectedBG)
+	} else {
+		style = style.Reverse(true)
+	}
+	return style.Width(max(1, width)).Render(trimWidth(text, max(1, width)))
+}
+
+func quotaStatus(result quota.Result, now time.Time) (bool, string) {
+	if result.Err != nil {
+		return false, "ERROR"
+	}
+	snapshot := result.Snapshot
+	if snapshot.Source == "cache-stale" || strings.TrimSpace(snapshot.Metadata["warning"]) != "" {
+		return false, "STALE"
+	}
+	if snapshot.Source != "google-cloud-code" || snapshot.FetchedAt.IsZero() {
+		return false, "UNKNOWN"
+	}
+	if now.Sub(snapshot.FetchedAt) > quota.DefaultAutoSwitchMaxAge {
+		return false, "OLD"
+	}
+	if _, ok := quota.MinimumKnownRemaining(snapshot); !ok {
+		return false, "UNKNOWN"
+	}
+	return true, "LIVE"
+}
+
+func renderQuotaBadge(state string) string {
+	return renderQuotaBadgeWithTheme(state, currentTheme())
+}
+
+func renderQuotaBadgeWithTheme(state string, theme tuiTheme) string {
+	var c color.Color
+	switch state {
+	case "LIVE":
+		c = theme.Success
+	case "STALE", "OLD":
+		c = theme.Warning
+	case "ERROR":
+		c = theme.Danger
+	default:
+		c = theme.Muted
+	}
+	return theme.style(c).Bold(true).Render("[" + state + "]")
 }
 
 func renderQuotaPanel(m Model, width, height int) string {
+	return renderQuotaPanelWithTheme(m, width, height, currentTheme())
+}
+
+func renderQuotaPanelWithTheme(m Model, width, height int, theme tuiTheme) string {
 	profile, ok := m.selectedProfile()
 	if !ok {
-		return renderBox("Model Quota", dim+"Select an account to inspect model quota."+reset, width, height, false)
+		return renderBoxWithTheme("Model quota", theme.style(theme.Muted).Render("Select an account to inspect model quota."), width, height, false, theme)
 	}
 	result := m.resultFor(profile)
 	if result.Err != nil {
-		return renderBox("Model Quota · "+profile, paint(red, "Unavailable: "+result.Err.Error()), width, height, false)
+		return renderBoxWithTheme("Model quota · "+profile, theme.style(theme.Danger).Bold(true).Render("Unavailable: "+result.Err.Error()), width, height, false, theme)
 	}
+	live, state := quotaStatus(result, time.Now())
 	models := quota.SortedModels(result.Snapshot)
 	if len(models) == 0 {
-		return renderBox("Model Quota · "+profile, dim+"No model quota returned."+reset, width, height, false)
+		return renderBoxWithTheme("Model quota · "+profile, theme.style(theme.Muted).Render("No model quota returned."), width, height, false, theme)
 	}
-	entries := make([]string, 0, len(models))
+
+	entries := make([]string, 0, len(models)+2)
+	if !live {
+		entries = append(entries, theme.style(theme.Warning).Bold(true).Render(state+" quota is display-only and cannot trigger auto-switch."))
+		if warning := strings.TrimSpace(result.Snapshot.Metadata["warning"]); warning != "" {
+			entries = append(entries, theme.style(theme.Muted).Render(trimWidth(warning, width-8)))
+		}
+	}
 	now := time.Now()
 	for _, model := range models {
 		remaining := "unknown"
-		bar := dim + "[··········]" + reset
+		bar := theme.style(theme.Muted).Render("[··········]")
 		if model.Remaining >= 0 {
 			remaining = fmt.Sprintf("%3d%%", model.Remaining)
-			bar = paint(quotaColor(model.Remaining), compactBar(model.Remaining, 10))
-			remaining = paint(quotaColor(model.Remaining), remaining)
+			if live {
+				c := quotaThemeColor(theme, model.Remaining)
+				bar = theme.style(c).Render(compactBar(model.Remaining, 10))
+				remaining = theme.style(c).Bold(true).Render(remaining)
+			} else {
+				bar = theme.style(theme.Muted).Render(compactBar(model.Remaining, 10))
+				remaining = theme.style(theme.Muted).Render(remaining)
+			}
 		}
 		variants := ""
 		if model.Variants > 1 {
@@ -207,22 +354,50 @@ func renderQuotaPanel(m Model, width, height int) string {
 		}
 		resetText := ""
 		if duration := quota.ResetIn(model.ResetAt, now); duration > 0 {
-			resetText = " · " + compactDuration(duration)
+			resetText = theme.style(theme.Muted).Render(" · reset " + compactDuration(duration))
 		}
-		entries = append(entries, fmt.Sprintf("%-30s %s %s%s%s", trimWidth(model.Name, 30), bar, remaining, variants, resetText))
+		name := theme.style(theme.Text).Render(padRight(trimWidth(model.Name, 28), 28))
+		entries = append(entries, fmt.Sprintf("%s %s %s%s%s", name, bar, remaining, variants, resetText))
 	}
-	body := renderGrid(entries, width-4)
-	requiredRows := len(entries)
-	if width >= 100 {
-		requiredRows = (len(entries) + 1) / 2
+	body := renderGrid(entries, width-6)
+	rows := len(entries)
+	if width >= 104 {
+		rows = (len(entries) + 1) / 2
 	}
-	height = min(height, max(5, requiredRows+2))
-	title := fmt.Sprintf("Model Quota · %s · %s", profile, result.Snapshot.Source)
-	return renderBox(title, body, width, height, false)
+	height = min(height, max(5, rows+2))
+	age := "unknown age"
+	if !result.Snapshot.FetchedAt.IsZero() {
+		age = compactDuration(maxDuration(0, now.Sub(result.Snapshot.FetchedAt))) + " ago"
+	}
+	title := fmt.Sprintf("Model quota · %s · %s · %s", profile, state, age)
+	return renderBoxWithTheme(title, body, width, height, false, theme)
+}
+
+func quotaThemeColor(theme tuiTheme, remaining int) color.Color {
+	switch {
+	case remaining <= 20:
+		return theme.Danger
+	case remaining <= 50:
+		return theme.Warning
+	default:
+		return theme.Success
+	}
+}
+
+func renderConfirmationPanel(m Model, width, height int) string {
+	return renderConfirmationPanelWithTheme(m, width, height, currentTheme())
+}
+
+func renderConfirmationPanelWithTheme(m Model, width, height int, theme tuiTheme) string {
+	title := theme.style(theme.Warning).Bold(true).Render("⚠ " + m.ConfirmTitle)
+	body := title + "\n\n" + theme.style(theme.Text).Render(m.ConfirmBody) + "\n\n" +
+		theme.style(theme.Success).Bold(true).Render("Enter / Y  confirm") + "     " +
+		theme.style(theme.Danger).Bold(true).Render("Esc / N  cancel")
+	return renderBoxWithTheme("Safety confirmation", body, width, height, true, theme)
 }
 
 func renderGrid(entries []string, width int) string {
-	if width < 100 {
+	if width < 104 {
 		return strings.Join(entries, "\n")
 	}
 	columnWidth := width/2 - 1
@@ -240,61 +415,48 @@ func renderGrid(entries []string, width int) string {
 }
 
 func renderHelp(m Model, width int) string {
-	text := "Tab panels  ↑/↓ move  Enter run  / search  r refresh  R refresh timer  a auto-switch  A threshold  p previous  d doctor  q quit"
-	if m.EditingRefresh {
+	return renderHelpWithTheme(m, width, currentTheme())
+}
+
+func renderHelpWithTheme(m Model, width int, theme tuiTheme) string {
+	text := "Tab panels  ↑/↓ move  Enter run  s hot-switch  / search  r refresh  a auto  A threshold  p previous  d doctor  q quit"
+	if m.confirming() {
+		text = "Enter / Y confirm · Esc / N cancel · q quit"
+	} else if m.EditingRefresh {
 		text = "Type seconds · 0 disables · Enter save · Esc cancel"
 	} else if m.EditingThreshold {
 		text = "Type threshold 0–100 · Enter save · Esc cancel"
 	} else if m.Searching {
 		text = "Type to search · Enter apply · Ctrl-U clear · Esc cancel"
 	}
-	return dim + trimWidth(text, width) + reset
+	return theme.style(theme.Muted).Render(trimWidth(text, width))
 }
 
 func renderBox(title, body string, width, height int, focused bool) string {
+	return renderBoxWithTheme(title, body, width, height, focused, currentTheme())
+}
+
+func renderBoxWithTheme(title, body string, width, height int, focused bool, theme tuiTheme) string {
 	if width < 10 {
 		return body
 	}
-	marker := ""
+	borderColor := theme.Border
 	if focused {
-		marker = paint(cyan, "● ")
+		borderColor = theme.Accent
+		title = "● " + title
 	}
-	title = marker + sanitizeTerminalText(title)
-	top := "┌─ " + trimWidth(title, width-6) + " " + strings.Repeat("─", max(0, width-visibleWidth(title)-5)) + "┐"
-	bottom := "└" + strings.Repeat("─", max(0, width-2)) + "┘"
-	bodyLines := strings.Split(sanitizeTerminalText(body), "\n")
-	maxBody := max(1, height-2)
-	if len(bodyLines) > maxBody {
-		bodyLines = bodyLines[:maxBody]
+	titleStyle := theme.style(borderColor).Bold(true)
+	body = truncateLines(body, max(1, height-2), max(1, width-6))
+	style := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		Padding(0, 1).
+		Width(max(1, width-4)).
+		Height(max(1, height-2))
+	if theme.ColorsEnabled {
+		style = style.Foreground(theme.Text).BorderForeground(borderColor)
 	}
-	for len(bodyLines) < maxBody {
-		bodyLines = append(bodyLines, "")
-	}
-	lines := []string{top}
-	for _, line := range bodyLines {
-		line = trimWidth(line, width-4)
-		lines = append(lines, "│ "+padRight(line, width-4)+" │")
-	}
-	lines = append(lines, bottom)
-	return strings.Join(lines, "\n")
-}
-
-func joinColumns(left, right string, leftWidth, rightWidth int) string {
-	leftLines := strings.Split(left, "\n")
-	rightLines := strings.Split(right, "\n")
-	rows := max(len(leftLines), len(rightLines))
-	lines := make([]string, 0, rows)
-	for index := 0; index < rows; index++ {
-		leftLine, rightLine := "", ""
-		if index < len(leftLines) {
-			leftLine = leftLines[index]
-		}
-		if index < len(rightLines) {
-			rightLine = rightLines[index]
-		}
-		lines = append(lines, padRight(leftLine, leftWidth)+" "+padRight(rightLine, rightWidth))
-	}
-	return strings.Join(lines, "\n")
+	content := titleStyle.Render(title) + "\n" + body
+	return style.Render(content)
 }
 
 func compactBar(value, width int) string {
@@ -313,7 +475,7 @@ func compactDuration(value time.Duration) string {
 		return fmt.Sprintf("%dd %dh", int(value/(24*time.Hour)), int(value%(24*time.Hour)/time.Hour))
 	}
 	if value >= time.Hour {
-		minutes := int(value%time.Hour/time.Minute)
+		minutes := int(value % time.Hour / time.Minute)
 		if minutes == 0 {
 			return fmt.Sprintf("%dh", int(value/time.Hour))
 		}
@@ -323,6 +485,13 @@ func compactDuration(value time.Duration) string {
 		return fmt.Sprintf("%dm", max(1, int(value/time.Minute)))
 	}
 	return fmt.Sprintf("%ds", max(1, int(value/time.Second)))
+}
+
+func maxDuration(a, b time.Duration) time.Duration {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func truncateLines(value string, maxLines, width int) string {
@@ -341,14 +510,17 @@ func trimWidth(value string, width int) string {
 		return ""
 	}
 	plain := stripANSI(sanitizeTerminalText(value))
-	if len([]rune(plain)) <= width {
+	if lipgloss.Width(plain) <= width {
 		return sanitizeTerminalText(value)
 	}
 	runes := []rune(plain)
 	if width == 1 {
 		return string(runes[:1])
 	}
-	return string(runes[:width-1]) + "…"
+	for len(runes) > 0 && lipgloss.Width(string(runes))+1 > width {
+		runes = runes[:len(runes)-1]
+	}
+	return string(runes) + "…"
 }
 
 func padRight(value string, width int) string {
@@ -361,7 +533,7 @@ func padRight(value string, width int) string {
 }
 
 func visibleWidth(value string) int {
-	return len([]rune(stripANSI(sanitizeTerminalText(value))))
+	return lipgloss.Width(stripANSI(sanitizeTerminalText(value)))
 }
 
 func sanitizeTerminalText(value string) string {
@@ -396,28 +568,6 @@ func stripANSI(value string) string {
 		output.WriteRune(r)
 	}
 	return output.String()
-}
-
-func colorsEnabled() bool {
-	return os.Getenv("NO_COLOR") == "" && strings.ToLower(os.Getenv("TERM")) != "dumb"
-}
-
-func paint(color, value string) string {
-	if !colorsEnabled() {
-		return value
-	}
-	return color + value + reset
-}
-
-func quotaColor(value int) string {
-	switch {
-	case value <= 20:
-		return red
-	case value <= 50:
-		return yellow
-	default:
-		return green
-	}
 }
 
 func min(a, b int) int {

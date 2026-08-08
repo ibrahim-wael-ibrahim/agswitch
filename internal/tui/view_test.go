@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/ibrahim-wael/agswitch/internal/account"
+	"github.com/ibrahim-wael/agswitch/internal/quota"
 )
 
 func TestSanitizeTerminalTextRemovesTabsAndControls(t *testing.T) {
@@ -27,7 +28,7 @@ func TestRenderHeaderNormalizesVersionAndShowsRefresh(t *testing.T) {
 		Status: "Ready",
 	}
 	header := stripANSI(renderHeader(160, model))
-	for _, expected := range []string{"AGSwitch v1.0.0", "Refresh: every 30s", "Auto switch: 25%"} {
+	for _, expected := range []string{"AGSwitch v1.0.0", "REFRESH: every 30s", "AUTO: 25%", "Ready"} {
 		if !strings.Contains(header, expected) {
 			t.Fatalf("header does not contain %q: %q", expected, header)
 		}
@@ -46,6 +47,64 @@ func TestAccountPanelShowsEmailOnOwnLine(t *testing.T) {
 	panel := stripANSI(renderAccountPanel(model, 70, 7))
 	if !strings.Contains(panel, "ibrahim@example.com") {
 		t.Fatalf("account panel omitted email: %q", panel)
+	}
+}
+
+func TestAccountPanelMarksStaleQuotaWithoutPresentingPercentage(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	model := Model{
+		Accounts: []account.Account{{ID: "old", Email: "old@example.com"}},
+		Results: []quota.Result{{
+			Profile: "old",
+			Snapshot: quota.Snapshot{
+				Profile:   "old",
+				Source:    "cache-stale",
+				FetchedAt: time.Now().Add(-24 * time.Hour),
+				Models: map[string]quota.ModelUsage{
+					"model": {ID: "model", Name: "Model", Remaining: 100, Limit: 100},
+				},
+				Metadata: map[string]string{"warning": "refresh unavailable"},
+			},
+		}},
+		Focus: focusAccounts,
+	}
+	panel := stripANSI(renderAccountPanel(model, 80, 8))
+	if !strings.Contains(panel, "STALE") {
+		t.Fatalf("account panel should mark stale quota: %q", panel)
+	}
+	if strings.Contains(panel, "100%") {
+		t.Fatalf("stale account summary must not present quota as usable: %q", panel)
+	}
+}
+
+func TestQuotaStatusRecognizesRecentLiveSnapshot(t *testing.T) {
+	now := time.Now()
+	result := quota.Result{
+		Profile: "work",
+		Snapshot: quota.Snapshot{
+			Profile:   "work",
+			Source:    "google-cloud-code",
+			FetchedAt: now.Add(-30 * time.Second),
+			Models: map[string]quota.ModelUsage{
+				"model": {ID: "model", Name: "Model", Remaining: 75, Limit: 100},
+			},
+			Metadata: map[string]string{},
+		},
+	}
+	live, state := quotaStatus(result, now)
+	if !live || state != "LIVE" {
+		t.Fatalf("quotaStatus() = %v, %q; want true, LIVE", live, state)
+	}
+}
+
+func TestNoColorDisablesSemanticForegrounds(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	theme := currentTheme()
+	if theme.ColorsEnabled {
+		t.Fatal("NO_COLOR should disable semantic colors")
+	}
+	if strings.Contains(theme.style(theme.Success).Render("ok"), "\x1b[") {
+		t.Fatal("NO_COLOR rendering should not contain ANSI colors")
 	}
 }
 

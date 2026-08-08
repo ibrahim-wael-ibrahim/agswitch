@@ -11,5 +11,6 @@ type Account struct {
 	UpdatedAt             time.Time `json:"updated_at"`
 	LastUsedAt            time.Time `json:"last_used_at,omitempty"`
 	CredentialFingerprint string    `json:"credential_fingerprint"`
+	IdentityFingerprint   string    `json:"identity_fingerprint,omitempty"`
 	QuotaEnabled          bool      `json:"quota_enabled"`
 }

@@ -82,17 +82,65 @@ func (s *Service) List(ctx context.Context) ([]account.Account, error) {
 	if err != nil {
 		return nil, err
 	}
-	fp := ""
+	var active credentials.Credential
 	if s.Active != nil {
-		c, e := s.Active.Load(ctx)
-		if e == nil {
-			fp = c.Fingerprint
-		} else if !errors.Is(e, credentials.ErrNotFound) {
-			return nil, fmt.Errorf("read active credential: %w", e)
+		active, err = s.Active.Load(ctx)
+		if err != nil && !errors.Is(err, credentials.ErrNotFound) {
+			return nil, fmt.Errorf("read active credential: %w", err)
+		}
+		if errors.Is(err, credentials.ErrNotFound) {
+			active = credentials.Credential{}
 		}
 	}
+
+	matched := false
 	for i := range items {
-		items[i].Active = fp != "" && items[i].CredentialFingerprint == fp
+		profileCredential := credentials.Credential{}
+		if s.Profiles != nil {
+			loaded, loadErr := s.Profiles.Load(ctx, items[i].ID)
+			if loadErr == nil {
+				profileCredential = loaded
+				if items[i].IdentityFingerprint == "" && loaded.IdentityFingerprint != "" {
+					items[i].IdentityFingerprint = loaded.IdentityFingerprint
+				}
+			} else if !errors.Is(loadErr, credentials.ErrNotFound) {
+				return nil, fmt.Errorf("load profile %q: %w", items[i].ID, loadErr)
+			}
+		}
+
+		identityMatch := active.IdentityFingerprint != "" &&
+			items[i].IdentityFingerprint != "" &&
+			active.IdentityFingerprint == items[i].IdentityFingerprint
+		payloadMatch := active.Fingerprint != "" &&
+			items[i].CredentialFingerprint == active.Fingerprint
+		items[i].Active = !matched && (identityMatch || payloadMatch)
+		if !items[i].Active {
+			continue
+		}
+		matched = true
+		changed := false
+		if items[i].IdentityFingerprint == "" && active.IdentityFingerprint != "" {
+			items[i].IdentityFingerprint = active.IdentityFingerprint
+			changed = true
+		}
+		if active.Email != "" && items[i].Email != active.Email {
+			items[i].Email = active.Email
+			changed = true
+		}
+		if active.Fingerprint != "" && items[i].CredentialFingerprint != active.Fingerprint {
+			items[i].CredentialFingerprint = active.Fingerprint
+			changed = true
+			if s.Profiles != nil && profileCredential.Fingerprint != active.Fingerprint {
+				if saveErr := s.Profiles.Save(ctx, items[i].ID, active); saveErr != nil {
+					return nil, fmt.Errorf("sync renewed credential to profile %q: %w", items[i].ID, saveErr)
+				}
+			}
+		}
+		if changed {
+			if saveErr := s.Accounts.Save(ctx, items[i]); saveErr != nil {
+				return nil, fmt.Errorf("update active account metadata: %w", saveErr)
+			}
+		}
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].ID < items[j].ID })
 	return items, nil
@@ -248,7 +296,13 @@ func (s *Service) saveCredential(ctx context.Context, name string, c credentials
 			}
 			return errors.Join(e, rb)
 		}
-		item := account.Account{ID: name, Email: c.Email, CredentialFingerprint: c.Fingerprint, QuotaEnabled: true}
+		item := account.Account{
+			ID:                    name,
+			Email:                 c.Email,
+			CredentialFingerprint: c.Fingerprint,
+			IdentityFingerprint:   c.IdentityFingerprint,
+			QuotaEnabled:          true,
+		}
 		if old, g := s.Accounts.Get(ctx, name); g == nil {
 			item.CreatedAt = old.CreatedAt
 			item.Label = old.Label

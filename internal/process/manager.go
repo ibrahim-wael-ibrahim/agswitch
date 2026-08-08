@@ -17,11 +17,16 @@ type Quitter interface {
 	Quit(ctx context.Context, executable string) error
 }
 
+type BackendReloader interface {
+	Reload(ctx context.Context) error
+}
+
 type Manager struct {
 	Executable string
 	Detector   Detector
 	Launcher   Launcher
 	Quitter    Quitter
+	Backend    BackendReloader
 }
 
 func NewManager(executable string) *Manager {
@@ -47,4 +52,11 @@ func (m *Manager) Start(ctx context.Context) error {
 		return errors.New("process launcher is not configured")
 	}
 	return m.Launcher.Launch(ctx, m.Executable)
+}
+
+func (m *Manager) ReloadBackend(ctx context.Context) error {
+	if m == nil || m.Backend == nil {
+		return errors.New("language server reloader is not configured")
+	}
+	return m.Backend.Reload(ctx)
 }
