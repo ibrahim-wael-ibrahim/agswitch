@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"image/color"
 	"os"
 	"strings"
 	"time"
@@ -15,18 +16,18 @@ import (
 )
 
 type tuiTheme struct {
-	Accent        lipgloss.Color
-	AccentSoft    lipgloss.Color
-	Success       lipgloss.Color
-	Warning       lipgloss.Color
-	Danger        lipgloss.Color
-	Info          lipgloss.Color
-	Text          lipgloss.Color
-	Muted         lipgloss.Color
-	Border        lipgloss.Color
-	Surface       lipgloss.Color
-	SelectedBG    lipgloss.Color
-	SelectedText  lipgloss.Color
+	Accent        color.Color
+	AccentSoft    color.Color
+	Success       color.Color
+	Warning       color.Color
+	Danger        color.Color
+	Info          color.Color
+	Text          color.Color
+	Muted         color.Color
+	Border        color.Color
+	Surface       color.Color
+	SelectedBG    color.Color
+	SelectedText  color.Color
 	ColorsEnabled bool
 }
 
@@ -52,10 +53,10 @@ func currentTheme() tuiTheme {
 	}
 }
 
-func (t tuiTheme) style(color lipgloss.Color) lipgloss.Style {
+func (t tuiTheme) style(c color.Color) lipgloss.Style {
 	s := lipgloss.NewStyle()
 	if t.ColorsEnabled {
-		s = s.Foreground(color)
+		s = s.Foreground(c)
 	}
 	return s
 }
@@ -154,13 +155,12 @@ func renderHeaderWithTheme(width int, m Model, theme tuiTheme) string {
 	if m.EditingThreshold {
 		line2 = theme.style(theme.Warning).Bold(true).Render("Auto-switch threshold: "+m.ThresholdInput+"%_") + theme.style(theme.Muted).Render("  Enter save · Esc cancel")
 	}
-	line3 := status
-	return trimWidth(line1, width) + "\n" + trimWidth(line2, width) + "\n" + trimWidth(line3, width)
+	return trimWidth(line1, width) + "\n" + trimWidth(line2, width) + "\n" + trimWidth(status, width)
 }
 
-func chip(theme tuiTheme, label, value string, color lipgloss.Color) string {
+func chip(theme tuiTheme, label, value string, c color.Color) string {
 	labelStyle := theme.style(theme.Muted).Bold(true)
-	valueStyle := theme.style(color).Bold(true)
+	valueStyle := theme.style(c).Bold(true)
 	return labelStyle.Render(label+":") + " " + valueStyle.Render(value)
 }
 
@@ -293,19 +293,18 @@ func renderQuotaBadge(state string) string {
 }
 
 func renderQuotaBadgeWithTheme(state string, theme tuiTheme) string {
-	var color lipgloss.Color
+	var c color.Color
 	switch state {
 	case "LIVE":
-		color = theme.Success
+		c = theme.Success
 	case "STALE", "OLD":
-		color = theme.Warning
+		c = theme.Warning
 	case "ERROR":
-		color = theme.Danger
+		c = theme.Danger
 	default:
-		color = theme.Muted
+		c = theme.Muted
 	}
-	style := theme.style(color).Bold(true)
-	return style.Render("[" + state + "]")
+	return theme.style(c).Bold(true).Render("[" + state + "]")
 }
 
 func renderQuotaPanel(m Model, width, height int) string {
@@ -341,9 +340,9 @@ func renderQuotaPanelWithTheme(m Model, width, height int, theme tuiTheme) strin
 		if model.Remaining >= 0 {
 			remaining = fmt.Sprintf("%3d%%", model.Remaining)
 			if live {
-				color := quotaThemeColor(theme, model.Remaining)
-				bar = theme.style(color).Render(compactBar(model.Remaining, 10))
-				remaining = theme.style(color).Bold(true).Render(remaining)
+				c := quotaThemeColor(theme, model.Remaining)
+				bar = theme.style(c).Render(compactBar(model.Remaining, 10))
+				remaining = theme.style(c).Bold(true).Render(remaining)
 			} else {
 				bar = theme.style(theme.Muted).Render(compactBar(model.Remaining, 10))
 				remaining = theme.style(theme.Muted).Render(remaining)
@@ -374,7 +373,7 @@ func renderQuotaPanelWithTheme(m Model, width, height int, theme tuiTheme) strin
 	return renderBoxWithTheme(title, body, width, height, false, theme)
 }
 
-func quotaThemeColor(theme tuiTheme, remaining int) lipgloss.Color {
+func quotaThemeColor(theme tuiTheme, remaining int) color.Color {
 	switch {
 	case remaining <= 20:
 		return theme.Danger
@@ -452,10 +451,9 @@ func renderBoxWithTheme(title, body string, width, height int, focused bool, the
 		Border(lipgloss.RoundedBorder()).
 		Padding(0, 1).
 		Width(max(1, width-4)).
-		Height(max(1, height-2)).
-		BorderForeground(borderColor)
+		Height(max(1, height-2))
 	if theme.ColorsEnabled {
-		style = style.Foreground(theme.Text)
+		style = style.Foreground(theme.Text).BorderForeground(borderColor)
 	}
 	content := titleStyle.Render(title) + "\n" + body
 	return style.Render(content)
