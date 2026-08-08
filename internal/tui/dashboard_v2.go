@@ -107,12 +107,15 @@ func (m dashboardModel) View() tea.View {
 	header := renderFriendlyHeader(width, m.Model, theme)
 	footer := renderFriendlyHelp(width, m, theme)
 	available := max(12, height-7)
-	accountsMin := min(max(len(m.filteredAccounts())+4, 9), 16)
+	accountsMin := min(max(len(m.filteredAccounts())+5, 10), 17)
 
 	var body string
 	if width >= 116 {
-		accountsWidth := max(66, width*60/100)
-		detailWidth := max(46, width-accountsWidth-1)
+		// Accounts need enough width for a name + state + five-hour summary, but
+		// the selected-account panel benefits more from extra room because auth
+		// and provider explanations are prose rather than columns.
+		accountsWidth := max(58, width*55/100)
+		detailWidth := max(50, width-accountsWidth-1)
 		panelHeight := min(max(accountsMin, 14), available)
 		body = lipgloss.JoinHorizontal(
 			lipgloss.Top,
@@ -121,14 +124,14 @@ func (m dashboardModel) View() tea.View {
 			renderAccountHealth(m.Model, detailWidth, panelHeight, theme),
 		)
 	} else {
-		accountHeight := min(accountsMin, max(9, available/2))
-		detailHeight := max(9, available-accountHeight-1)
+		accountHeight := min(accountsMin, max(10, available/2))
+		detailHeight := max(10, available-accountHeight-1)
 		body = renderFriendlyAccounts(m.Model, width, accountHeight, theme) + "\n" + renderAccountHealth(m.Model, width, detailHeight, theme)
 	}
 
 	parts := []string{header, body}
 	if m.ShowModels && height >= 25 {
-		modelHeight := max(7, min(12, height-lipgloss.Height(header)-lipgloss.Height(body)-3))
+		modelHeight := max(7, min(14, height-lipgloss.Height(header)-lipgloss.Height(body)-3))
 		parts = append(parts, renderCompactModels(m.Model, width, modelHeight, theme))
 	}
 	parts = append(parts, footer)
@@ -171,12 +174,20 @@ func renderFriendlyHeader(width int, m Model, theme tuiTheme) string {
 func renderFriendlyAccounts(m Model, width, height int, theme tuiTheme) string {
 	items := m.filteredAccounts()
 	now := time.Now().UTC()
-	lines := make([]string, 0, len(items)+2)
+	lines := make([]string, 0, len(items)+3)
 	searchValue := m.Search
 	if m.Searching {
 		searchValue += "_"
 	}
 	lines = append(lines, theme.style(theme.Info).Bold(true).Render("/ Search")+theme.style(theme.Muted).Render(": "+searchValue))
+
+	contentWidth := max(12, width-6)
+	if contentWidth >= 58 {
+		leftHeader := "ACCOUNT"
+		rightHeader := "STATE / FIVE-HOUR"
+		gap := max(2, contentWidth-visibleWidth(leftHeader)-visibleWidth(rightHeader))
+		lines = append(lines, theme.style(theme.Muted).Render(leftHeader+strings.Repeat(" ", gap)+rightHeader))
+	}
 
 	if len(items) == 0 {
 		lines = append(lines, theme.style(theme.Muted).Render("No matching accounts"))
@@ -204,11 +215,17 @@ func renderFriendlyAccounts(m Model, width, height int, theme tuiTheme) string {
 		if five != "" {
 			right += "  " + five
 		}
-		leftWidth := max(10, width-visibleWidth(right)-9)
-		left := active + " " + padRight(trimWidth(item.ID, leftWidth), leftWidth)
-		line := theme.style(theme.Text).Render(active+" ") + theme.style(theme.Text).Bold(item.Active).Render(padRight(trimWidth(item.ID, leftWidth), leftWidth)) + "  " + right
+		// The box content area is width-6. Previous revisions budgeted against
+		// the outer width, causing the final badge to wrap onto a second line.
+		leftWidth := max(8, contentWidth-visibleWidth(right)-4)
+		name := trimWidth(item.ID, leftWidth)
+		leftPlain := active + " " + padRight(name, leftWidth)
+		plain := leftPlain + "  " + stripANSI(right)
+		line := theme.style(theme.Text).Render(active+" ") + theme.style(theme.Text).Bold(item.Active).Render(padRight(name, leftWidth)) + "  " + right
 		if m.Focus == focusAccounts && index == m.SelectedAccount {
-			line = selectedLine(theme, left+"  "+stripANSI(right), max(1, width-6))
+			line = selectedLine(theme, plain, contentWidth)
+		} else {
+			line = trimWidth(line, contentWidth)
 		}
 		lines = append(lines, line)
 	}
@@ -240,43 +257,104 @@ func renderAccountHealth(m Model, width, height int, theme tuiTheme) string {
 	now := time.Now().UTC()
 	live, state := dashboardQuotaStatus(result, now)
 	windows := quota.SummarizeWindows(result.Snapshot, now)
+	contentWidth := max(12, width-6)
 
 	lines := []string{theme.style(theme.Text).Bold(true).Render(profile) + "  " + renderDashboardBadge(state, theme)}
 	for _, item := range m.Accounts {
 		if item.ID == profile && strings.TrimSpace(item.Email) != "" {
-			lines = append(lines, theme.style(theme.Muted).Render(item.Email))
+			lines = append(lines, theme.style(theme.Muted).Render(trimWidth(item.Email, contentWidth)))
 			break
 		}
 	}
 	lines = append(lines, "")
 
 	if live && windows.FiveHour.Available {
-		lines = append(lines, renderWindowBlock("5 HOUR", windows.FiveHour, now, width-6, theme))
+		lines = append(lines, renderWindowBlock("5 HOUR", windows.FiveHour, now, contentWidth, theme))
 	} else if live {
-		lines = append(lines, theme.style(theme.Warning).Bold(true).Render("5 HOUR  provider did not expose a short reset window"))
+		lines = appendStyledWrapped(lines, "5 HOUR  provider did not expose a short reset window", contentWidth, theme.style(theme.Warning).Bold(true))
 	} else if state == "AUTH" {
-		lines = append(lines, theme.style(theme.Danger).Bold(true).Render("5 HOUR  needs refreshed authentication for this saved profile"))
+		lines = appendStyledWrapped(lines, "5 HOUR  needs refreshed authentication for this saved profile", contentWidth, theme.style(theme.Danger).Bold(true))
 	} else {
-		lines = append(lines, theme.style(theme.Warning).Bold(true).Render("5 HOUR  waiting for a live provider response"))
+		lines = appendStyledWrapped(lines, "5 HOUR  waiting for a live provider response", contentWidth, theme.style(theme.Warning).Bold(true))
 	}
 
 	lines = append(lines, "")
 	if live && windows.Weekly.Available {
-		lines = append(lines, renderWindowBlock("WEEKLY", windows.Weekly, now, width-6, theme))
+		lines = append(lines, renderWindowBlock("WEEKLY", windows.Weekly, now, contentWidth, theme))
 	} else {
-		lines = append(lines, theme.style(theme.Muted).Render("WEEKLY  provider did not expose a separate long reset window"))
+		lines = appendStyledWrapped(lines, "WEEKLY  provider did not expose a separate long reset window", contentWidth, theme.style(theme.Muted))
 	}
 
 	if !live {
-		if warning := strings.TrimSpace(result.Snapshot.Metadata["warning"]); warning != "" {
-			lines = append(lines, "", theme.style(theme.Warning).Render(trimWidth(warning, width-6)))
-		} else if result.Err != nil {
-			lines = append(lines, "", theme.style(theme.Warning).Render(trimWidth(result.Err.Error(), width-6)))
+		warning := strings.TrimSpace(result.Snapshot.Metadata["warning"])
+		if warning == "" && result.Err != nil {
+			warning = result.Err.Error()
+		}
+		if warning != "" {
+			lines = append(lines, "")
+			prefix := "DETAIL  "
+			if state == "AUTH" {
+				prefix = "AUTH    "
+			}
+			lines = appendStyledWrapped(lines, prefix+warning, contentWidth, theme.style(theme.Warning))
 		}
 	}
 
-	lines = append(lines, "", theme.style(theme.Muted).Render("Enter/s hot switch · r refresh all · a auto · m model details"))
+	lines = append(lines, "", theme.style(theme.Muted).Render(trimWidth("Enter/s switch · r refresh · a auto · m models", contentWidth)))
 	return renderBoxWithTheme("Selected account", strings.Join(lines, "\n"), width, height, false, theme)
+}
+
+func appendStyledWrapped(lines []string, text string, width int, style lipgloss.Style) []string {
+	for _, line := range wrapPlainText(text, width) {
+		lines = append(lines, style.Render(line))
+	}
+	return lines
+}
+
+func wrapPlainText(value string, width int) []string {
+	value = strings.TrimSpace(stripANSI(sanitizeTerminalText(value)))
+	if value == "" {
+		return nil
+	}
+	width = max(1, width)
+	words := strings.Fields(value)
+	lines := make([]string, 0, 2)
+	current := ""
+	for _, word := range words {
+		if visibleWidth(word) > width {
+			if current != "" {
+				lines = append(lines, current)
+				current = ""
+			}
+			for visibleWidth(word) > width {
+				piece := trimWidth(word, width)
+				piece = strings.TrimSuffix(piece, "…")
+				if piece == "" {
+					break
+				}
+				lines = append(lines, piece)
+				word = strings.TrimPrefix(word, piece)
+			}
+			if word != "" {
+				current = word
+			}
+			continue
+		}
+		candidate := word
+		if current != "" {
+			candidate = current + " " + word
+		}
+		if visibleWidth(candidate) <= width {
+			current = candidate
+			continue
+		}
+		lines = append(lines, current)
+		current = word
+	}
+	if current != "" {
+		lines = append(lines, current)
+	}
+	return lines
 }
 
 func renderWindowInline(label string, window quota.WindowSummary, now time.Time, theme tuiTheme) string {
@@ -320,11 +398,24 @@ func renderCompactModels(m Model, width, height int, theme tuiTheme) string {
 		return renderBoxWithTheme("Model details", theme.style(theme.Muted).Render("No model quota returned."), width, height, false, theme)
 	}
 
-	maxRows := max(1, height-3)
-	if len(models) > maxRows {
-		models = models[:maxRows]
+	contentWidth := max(16, width-6)
+	rowsAvailable := max(1, height-3)
+	columns := 1
+	if contentWidth >= 104 {
+		columns = 2
 	}
-	lines := make([]string, 0, len(models))
+	capacity := rowsAvailable * columns
+	shown := len(models)
+	if shown > capacity {
+		shown = capacity
+	}
+	models = models[:shown]
+
+	cellWidth := contentWidth
+	if columns == 2 {
+		cellWidth = (contentWidth - 2) / 2
+	}
+	entries := make([]string, 0, len(models))
 	for _, model := range models {
 		remaining := "unknown"
 		if model.Remaining >= 0 {
@@ -334,10 +425,34 @@ func renderCompactModels(m Model, width, height int, theme tuiTheme) string {
 		if d := quota.ResetIn(model.ResetAt, time.Now()); d > 0 {
 			reset = " · " + compactDuration(d)
 		}
-		nameWidth := max(10, width-28)
-		lines = append(lines, fmt.Sprintf("%-*s %8s%s", nameWidth, trimWidth(model.Name, nameWidth), remaining, reset))
+		right := remaining + reset
+		nameWidth := max(8, cellWidth-visibleWidth(right)-1)
+		entry := padRight(trimWidth(model.Name, nameWidth), nameWidth) + " " + right
+		entries = append(entries, trimWidth(entry, cellWidth))
 	}
-	return renderBoxWithTheme("Model details · m to hide", strings.Join(lines, "\n"), width, height, false, theme)
+
+	var body string
+	if columns == 1 {
+		body = strings.Join(entries, "\n")
+	} else {
+		rows := (len(entries) + 1) / 2
+		lines := make([]string, 0, rows)
+		for row := 0; row < rows; row++ {
+			left := entries[row]
+			right := ""
+			if row+rows < len(entries) {
+				right = entries[row+rows]
+			}
+			lines = append(lines, padRight(left, cellWidth)+"  "+right)
+		}
+		body = strings.Join(lines, "\n")
+	}
+
+	title := "Model details · m to hide"
+	if shown < len(quota.SortedModels(result.Snapshot)) {
+		title = fmt.Sprintf("Model details · %d/%d shown · m to hide", shown, len(quota.SortedModels(result.Snapshot)))
+	}
+	return renderBoxWithTheme(title, body, width, height, false, theme)
 }
 
 func renderFriendlyHelp(width int, m dashboardModel, theme tuiTheme) string {
