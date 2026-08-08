@@ -72,7 +72,7 @@ func TestAccountHealthDoesNotInventWeekly(t *testing.T) {
 		}},
 	}
 	panel := stripANSI(renderAccountHealth(model, 72, 14, currentTheme()))
-	if !strings.Contains(panel, "WEEKLY  not separately exposed") {
+	if !strings.Contains(panel, "WEEKLY  provider did not expose a separate long reset window") {
 		t.Fatalf("weekly absence should be explicit: %q", panel)
 	}
 }
