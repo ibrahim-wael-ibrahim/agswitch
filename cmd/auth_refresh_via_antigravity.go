@@ -9,7 +9,6 @@ import (
 
 	"github.com/ibrahim-wael/agswitch/internal/account"
 	"github.com/ibrahim-wael/agswitch/internal/quota"
-	"github.com/ibrahim-wael/agswitch/internal/switcher"
 	"github.com/spf13/cobra"
 )
 
@@ -114,7 +113,10 @@ func refreshProfilesViaAntigravity(command *cobra.Command, d *dependencies, orig
 			report.Restored = true
 			return
 		}
-		restoreErr := d.app.Use(command.Context(), original, switcher.Options{LaunchMode: switcher.PreserveLaunchState, HotReload: true})
+		if !quiet {
+			fmt.Fprintf(command.OutOrStdout(), "[RESTORE] %s\n", original)
+		}
+		restoreErr := useProfileWithRecovery(command, d, original, "restore "+original, quiet)
 		if restoreErr == nil {
 			report.Restored = true
 			active = original
@@ -138,7 +140,7 @@ func refreshProfilesViaAntigravity(command *cobra.Command, d *dependencies, orig
 			if !quiet {
 				fmt.Fprintf(command.OutOrStdout(), "[SWITCH] %s · restarting language server only\n", target.ID)
 			}
-			if switchErr := d.app.Use(command.Context(), target.ID, switcher.Options{LaunchMode: switcher.PreserveLaunchState, HotReload: true}); switchErr != nil {
+			if switchErr := useProfileWithRecovery(command, d, target.ID, "switch to "+target.ID, quiet); switchErr != nil {
 				result := summarizeAntigravityRefresh(target, "switch_failed", quota.Result{Profile: target.ID}, switchErr.Error())
 				report.Results = append(report.Results, result)
 				err = errors.Join(err, fmt.Errorf("refresh %s: %w", target.ID, switchErr))
@@ -172,7 +174,7 @@ func refreshProfilesViaAntigravity(command *cobra.Command, d *dependencies, orig
 		if !quiet {
 			fmt.Fprintf(command.OutOrStdout(), "[RESTORE] %s\n", original)
 		}
-		if restoreErr := d.app.Use(command.Context(), original, switcher.Options{LaunchMode: switcher.PreserveLaunchState, HotReload: true}); restoreErr != nil {
+		if restoreErr := useProfileWithRecovery(command, d, original, "restore "+original, quiet); restoreErr != nil {
 			return report, errors.Join(err, fmt.Errorf("restore original profile %q: %w", original, restoreErr))
 		}
 		active = original
