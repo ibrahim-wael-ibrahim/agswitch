@@ -30,10 +30,10 @@ type liveQuotaMsg struct {
 }
 
 func (m friendlyDashboardModel) Init() tea.Cmd {
-	return m.loadLiveQuotaCommand()
+	return m.Model.loadLiveQuotaCommand()
 }
 
-func (m friendlyDashboardModel) loadLiveQuotaCommand() tea.Cmd {
+func (m Model) loadLiveQuotaCommand() tea.Cmd {
 	return func() tea.Msg {
 		accounts, err := m.Backend.List(m.Context)
 		if err != nil {
