@@ -119,14 +119,30 @@ prepare_source() {
   git clone --depth 1 --branch "$REF" "https://github.com/$REPO.git" "$SOURCE"
 }
 
+source_version() {
+  local tag sha
+  tag="$(cd "$SOURCE" && git describe --tags --exact-match 2>/dev/null || true)"
+  if [[ -n "$tag" ]]; then
+    printf '%s' "$tag"
+    return 0
+  fi
+  sha="$(cd "$SOURCE" && git rev-parse --short=8 HEAD 2>/dev/null || true)"
+  if [[ -n "$sha" ]]; then
+    printf 'v0.0.0-dev+%s' "$sha"
+  else
+    printf 'dev'
+  fi
+}
+
 build_from_source() {
   [[ "$OS" == linux ]] && install_linux_dependencies || install_windows_dependencies
   has go || die "Go is required but was not found after dependency installation"
   prepare_source
-  local output="$TMP/agswitch"
+  local output="$TMP/agswitch" build_version
   [[ "$OS" == windows ]] && output="$TMP/agswitch.exe"
-  log "Building AGSwitch from source ref $REF"
-  (cd "$SOURCE" && go build -trimpath -ldflags "-s -w" -o "$output" .)
+  build_version="$(source_version)"
+  log "Building AGSwitch $build_version from source ref $REF"
+  (cd "$SOURCE" && go build -trimpath -ldflags "-s -w -X github.com/ibrahim-wael/agswitch/cmd.version=$build_version" -o "$output" .)
   atomic_install "$output"
 }
 
