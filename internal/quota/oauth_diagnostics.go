@@ -149,13 +149,14 @@ func (p *GoogleProvider) DiagnoseAuth(ctx context.Context, credential credential
 			diagnostic.CurrentTokenInfo = &info
 			diagnostic.ClientIDMatchesToken = compareClientID(diagnostic.EffectiveClientID, info)
 		}
+		// A valid current access token can prove quota access even when AGSwitch
+		// cannot refresh it directly because the OAuth client secret is absent.
+		// This is important for credentials that Antigravity has just renewed.
+		p.testQuotaAccess(ctx, auth.AccessToken, auth.ProjectID, &diagnostic)
 	}
 
 	if !diagnostic.RefreshTokenPresent {
 		diagnostic.RefreshStatus = "missing_refresh_token"
-		if diagnostic.AccessTokenPresent {
-			p.testQuotaAccess(ctx, auth.AccessToken, auth.ProjectID, &diagnostic)
-		}
 		return diagnostic
 	}
 	if diagnostic.EffectiveClientID == "" {
@@ -178,9 +179,6 @@ func (p *GoogleProvider) DiagnoseAuth(ctx context.Context, credential credential
 			diagnostic.RefreshErrorDescription = failure.Description
 			diagnostic.RefreshErrorSubtype = failure.Subtype
 		}
-		if diagnostic.AccessTokenPresent {
-			p.testQuotaAccess(ctx, auth.AccessToken, auth.ProjectID, &diagnostic)
-		}
 		return diagnostic
 	}
 
@@ -191,6 +189,8 @@ func (p *GoogleProvider) DiagnoseAuth(ctx context.Context, credential credential
 			diagnostic.ClientIDMatchesToken = compareClientID(diagnostic.EffectiveClientID, info)
 		}
 	}
+	// Prefer validation with the newly refreshed token when direct OAuth refresh
+	// succeeds; this overwrites any current-token quota result above.
 	p.testQuotaAccess(ctx, refreshedToken, auth.ProjectID, &diagnostic)
 	return diagnostic
 }
