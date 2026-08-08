@@ -7,7 +7,11 @@ VERSION="${AGSWITCH_VERSION:-latest}"
 REF="${AGSWITCH_REF:-master}"
 BUILD_FROM_SOURCE="${AGSWITCH_BUILD_FROM_SOURCE:-false}"
 BINDIR="${BINDIR:-$HOME/.local/bin}"
-ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd || true)"
+SCRIPT_PATH="${BASH_SOURCE[0]-}"
+ROOT=""
+if [[ -n "$SCRIPT_PATH" && -f "$SCRIPT_PATH" ]]; then
+  ROOT="$(cd -- "$(dirname -- "$SCRIPT_PATH")/.." 2>/dev/null && pwd || true)"
+fi
 TMP="$(mktemp -d 2>/dev/null || mktemp -d -t agswitch)"
 SOURCE=""
 trap 'rm -rf "$TMP"' EXIT
@@ -109,7 +113,7 @@ install_release() {
 }
 
 prepare_source() {
-  if [[ -f "$ROOT/go.mod" ]]; then
+  if [[ -n "$ROOT" && -f "$ROOT/go.mod" ]]; then
     SOURCE="$ROOT"
     return 0
   fi
