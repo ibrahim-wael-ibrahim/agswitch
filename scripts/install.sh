@@ -124,11 +124,18 @@ prepare_source() {
 }
 
 source_version() {
-  local tag sha
+  local tag sha release_version
   tag="$(cd "$SOURCE" && git describe --tags --exact-match 2>/dev/null || true)"
   if [[ -n "$tag" ]]; then
     printf '%s' "$tag"
     return 0
+  fi
+  if [[ "$REF" == master && -f "$SOURCE/VERSION" ]]; then
+    release_version="$(tr -d '[:space:]' < "$SOURCE/VERSION")"
+    if [[ -n "$release_version" ]]; then
+      printf '%s' "$release_version"
+      return 0
+    fi
   fi
   sha="$(cd "$SOURCE" && git rev-parse --short=8 HEAD 2>/dev/null || true)"
   if [[ -n "$sha" ]]; then
