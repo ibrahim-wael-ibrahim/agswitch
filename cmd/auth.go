@@ -60,10 +60,58 @@ func printAuthDiagnostics(command *cobra.Command, results []quota.AuthDiagnostic
 			failed++
 		}
 	}
-	fmt.Fprintf(command.OutOrStdout(), "OAuth diagnostics: %d profiles · %d quota-ready · %d refresh OK · %d failed\n\n", len(results), live, refreshOK, failed)
+	fmt.Fprintf(command.OutOrStdout(), "OAuth diagnostics: %d profiles · %d quota-ready · %d refresh OK · %d failed\n", len(results), live, refreshOK, failed)
+	if suggested := suggestedOAuthClient(results); suggested != "" {
+		fmt.Fprintf(command.OutOrStdout(), "Suggested client from active token: %s\n", suggested)
+		if configured := configuredOAuthClient(results); configured != "" && configured != suggested {
+			fmt.Fprintf(command.OutOrStdout(), "WARNING: configured client %s does not match the active token client.\n", configured)
+		}
+	}
+	fmt.Fprintln(command.OutOrStdout())
 	for _, result := range results {
 		printAuthDiagnostic(command, result)
 	}
+}
+
+func suggestedOAuthClient(results []quota.AuthDiagnostic) string {
+	for _, result := range results {
+		if !result.Active || result.CurrentTokenInfo == nil {
+			continue
+		}
+		if client := tokenInfoClient(*result.CurrentTokenInfo); client != "" {
+			return client
+		}
+	}
+	for _, result := range results {
+		if result.CurrentTokenInfo == nil {
+			continue
+		}
+		if client := tokenInfoClient(*result.CurrentTokenInfo); client != "" {
+			return client
+		}
+	}
+	return ""
+}
+
+func configuredOAuthClient(results []quota.AuthDiagnostic) string {
+	for _, result := range results {
+		if result.Active && strings.TrimSpace(result.EffectiveClientID) != "" {
+			return strings.TrimSpace(result.EffectiveClientID)
+		}
+	}
+	for _, result := range results {
+		if strings.TrimSpace(result.EffectiveClientID) != "" {
+			return strings.TrimSpace(result.EffectiveClientID)
+		}
+	}
+	return ""
+}
+
+func tokenInfoClient(info quota.OAuthTokenInfo) string {
+	if client := strings.TrimSpace(info.IssuedTo); client != "" {
+		return client
+	}
+	return strings.TrimSpace(info.Audience)
 }
 
 func printAuthDiagnostic(command *cobra.Command, result quota.AuthDiagnostic) {
@@ -130,10 +178,7 @@ func printAuthDiagnostic(command *cobra.Command, result quota.AuthDiagnostic) {
 }
 
 func printTokenInfo(command *cobra.Command, label string, info quota.OAuthTokenInfo) {
-	client := strings.TrimSpace(info.IssuedTo)
-	if client == "" {
-		client = strings.TrimSpace(info.Audience)
-	}
+	client := tokenInfoClient(info)
 	if client != "" {
 		fmt.Fprintf(command.OutOrStdout(), "  %s client: %s\n", label, client)
 	}
