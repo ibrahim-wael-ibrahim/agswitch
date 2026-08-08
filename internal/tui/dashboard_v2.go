@@ -23,13 +23,31 @@ func newDashboardModel(model Model) dashboardModel {
 	return dashboardModel{Model: model}
 }
 
-func (m dashboardModel) Init() tea.Cmd {
-	// The dashboard is a live status surface, so the first load bypasses the
-	// cache and attempts every saved account concurrently.
-	return m.loadDataCommand(true)
-}
-
 func (m dashboardModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	if live, ok := message.(liveQuotaMsg); ok {
+		m.Busy = false
+		if live.data.err != nil {
+			m.Status = live.statusText()
+			return m, m.scheduleAutoRefresh()
+		}
+		firstLoad := !m.Initialized
+		m.Accounts = live.data.accounts
+		m.Results = live.data.results
+		m.Decision = live.data.decision
+		if firstLoad {
+			for index, item := range m.filteredAccounts() {
+				if item.Active {
+					m.SelectedAccount = index
+					break
+				}
+			}
+			m.Initialized = true
+		}
+		m.clampSelection()
+		m.Status = live.statusText()
+		return m, m.scheduleAutoRefresh()
+	}
+
 	if key, ok := message.(tea.KeyMsg); ok && !m.Busy && !m.Searching && !m.EditingRefresh && !m.EditingThreshold && !m.confirming() {
 		switch key.String() {
 		case "m":
@@ -40,6 +58,18 @@ func (m dashboardModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.Status = "Model details hidden"
 			}
 			return m, nil
+		case "r":
+			m.Busy = true
+			m.Status = "Refreshing all account quotas..."
+			return m, m.loadLiveQuotaCommand()
+		}
+	}
+
+	if tick, ok := message.(autoRefreshMsg); ok {
+		if tick.sequence == m.RefreshSequence && m.Options.AutoRefresh > 0 && !m.Busy && !m.Searching && !m.EditingRefresh && !m.EditingThreshold && !m.confirming() {
+			m.Busy = true
+			m.Status = "Refreshing all account quotas..."
+			return m, m.loadLiveQuotaCommand()
 		}
 	}
 
@@ -77,12 +107,12 @@ func (m dashboardModel) View() tea.View {
 	header := renderFriendlyHeader(width, m.Model, theme)
 	footer := renderFriendlyHelp(width, m, theme)
 	available := max(12, height-7)
-
 	accountsMin := min(max(len(m.filteredAccounts())+4, 9), 16)
+
 	var body string
 	if width >= 116 {
-		accountsWidth := max(58, width*62/100)
-		detailWidth := max(38, width-accountsWidth-1)
+		accountsWidth := max(66, width*60/100)
+		detailWidth := max(46, width-accountsWidth-1)
 		panelHeight := min(max(accountsMin, 14), available)
 		body = lipgloss.JoinHorizontal(
 			lipgloss.Top,
@@ -153,34 +183,52 @@ func renderFriendlyAccounts(m Model, width, height int, theme tuiTheme) string {
 	}
 	for index, item := range items {
 		result := m.resultFor(item.ID)
-		live, state := quotaStatus(result, now)
+		live, state := dashboardQuotaStatus(result, now)
 		windows := quota.SummarizeWindows(result.Snapshot, now)
 
 		active := "○"
 		if item.Active {
 			active = "●"
 		}
-		name := item.ID
-		status := renderQuotaBadgeWithTheme(state, theme)
+		status := renderDashboardBadge(state, theme)
 		five := ""
 		if live && windows.FiveHour.Available {
-			five = "  " + renderWindowInline("5h", windows.FiveHour, now, theme)
+			five = renderWindowInline("5h", windows.FiveHour, now, theme)
 		} else if live {
 			if remaining, ok := quota.MinimumKnownRemaining(result.Snapshot); ok {
-				five = "  " + theme.style(quotaThemeColor(theme, remaining)).Bold(true).Render(fmt.Sprintf("%d%%", remaining))
+				five = theme.style(quotaThemeColor(theme, remaining)).Bold(true).Render(fmt.Sprintf("%d%%", remaining))
 			}
 		}
 
-		availableWidth := max(12, width-visibleWidth(status)-visibleWidth(five)-7)
-		plain := fmt.Sprintf("%s %s", active, padRight(trimWidth(name, availableWidth), availableWidth)) + "  " + state
-		line := theme.style(theme.Text).Render(active+" ") + theme.style(theme.Text).Bold(item.Active).Render(padRight(trimWidth(name, availableWidth), availableWidth)) + "  " + status + five
+		right := status
+		if five != "" {
+			right += "  " + five
+		}
+		leftWidth := max(10, width-visibleWidth(right)-9)
+		left := active + " " + padRight(trimWidth(item.ID, leftWidth), leftWidth)
+		line := theme.style(theme.Text).Render(active+" ") + theme.style(theme.Text).Bold(item.Active).Render(padRight(trimWidth(item.ID, leftWidth), leftWidth)) + "  " + right
 		if m.Focus == focusAccounts && index == m.SelectedAccount {
-			line = selectedLine(theme, plain+stripANSI(five), max(1, width-6))
+			line = selectedLine(theme, left+"  "+stripANSI(right), max(1, width-6))
 		}
 		lines = append(lines, line)
 	}
 
 	return renderBoxWithTheme("Accounts · five-hour availability", strings.Join(lines, "\n"), width, height, m.Focus == focusAccounts || m.Focus == focusSearch, theme)
+}
+
+func renderDashboardBadge(state string, theme tuiTheme) string {
+	var color = theme.Muted
+	switch state {
+	case "LIVE":
+		color = theme.Success
+	case "AUTH":
+		color = theme.Danger
+	case "RETRY":
+		color = theme.Info
+	case "STALE", "OLD":
+		color = theme.Warning
+	}
+	return theme.style(color).Bold(true).Render("[" + state + "]")
 }
 
 func renderAccountHealth(m Model, width, height int, theme tuiTheme) string {
@@ -190,10 +238,10 @@ func renderAccountHealth(m Model, width, height int, theme tuiTheme) string {
 	}
 	result := m.resultFor(profile)
 	now := time.Now().UTC()
-	live, state := quotaStatus(result, now)
+	live, state := dashboardQuotaStatus(result, now)
 	windows := quota.SummarizeWindows(result.Snapshot, now)
 
-	lines := []string{theme.style(theme.Text).Bold(true).Render(profile) + "  " + renderQuotaBadgeWithTheme(state, theme)}
+	lines := []string{theme.style(theme.Text).Bold(true).Render(profile) + "  " + renderDashboardBadge(state, theme)}
 	for _, item := range m.Accounts {
 		if item.ID == profile && strings.TrimSpace(item.Email) != "" {
 			lines = append(lines, theme.style(theme.Muted).Render(item.Email))
@@ -206,24 +254,28 @@ func renderAccountHealth(m Model, width, height int, theme tuiTheme) string {
 		lines = append(lines, renderWindowBlock("5 HOUR", windows.FiveHour, now, width-6, theme))
 	} else if live {
 		lines = append(lines, theme.style(theme.Warning).Bold(true).Render("5 HOUR  provider did not expose a short reset window"))
+	} else if state == "AUTH" {
+		lines = append(lines, theme.style(theme.Danger).Bold(true).Render("5 HOUR  needs refreshed authentication for this saved profile"))
 	} else {
-		lines = append(lines, theme.style(theme.Warning).Bold(true).Render("5 HOUR  unavailable until this profile has live quota"))
+		lines = append(lines, theme.style(theme.Warning).Bold(true).Render("5 HOUR  waiting for a live provider response"))
 	}
 
 	lines = append(lines, "")
 	if live && windows.Weekly.Available {
 		lines = append(lines, renderWindowBlock("WEEKLY", windows.Weekly, now, width-6, theme))
 	} else {
-		lines = append(lines, theme.style(theme.Muted).Render("WEEKLY  not separately exposed by the current provider response"))
+		lines = append(lines, theme.style(theme.Muted).Render("WEEKLY  provider did not expose a separate long reset window"))
 	}
 
 	if !live {
 		if warning := strings.TrimSpace(result.Snapshot.Metadata["warning"]); warning != "" {
 			lines = append(lines, "", theme.style(theme.Warning).Render(trimWidth(warning, width-6)))
+		} else if result.Err != nil {
+			lines = append(lines, "", theme.style(theme.Warning).Render(trimWidth(result.Err.Error(), width-6)))
 		}
 	}
 
-	lines = append(lines, "", theme.style(theme.Muted).Render("s hot switch · r refresh all · a auto switch · m model details"))
+	lines = append(lines, "", theme.style(theme.Muted).Render("Enter/s hot switch · r refresh all · a auto · m model details"))
 	return renderBoxWithTheme("Selected account", strings.Join(lines, "\n"), width, height, false, theme)
 }
 
