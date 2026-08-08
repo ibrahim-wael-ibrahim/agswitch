@@ -13,6 +13,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const defaultDashboardRefreshSeconds = 60
+
 type dashboardBackend struct {
 	dependencies *dependencies
 }
@@ -68,16 +70,16 @@ func newTUICommand(dependencies *dependencies) *cobra.Command {
 	}
 	command.Flags().BoolVar(&stay, "stay", true, "stay open after switching")
 	command.Flags().IntVar(&autoThreshold, "auto-threshold", 20, "recommend auto-switch when minimum known quota is at or below this percentage")
-	command.Flags().IntVar(&autoRefreshSeconds, "auto-refresh", 0, "refresh live quota every N seconds; 0 disables automatic refresh")
+	command.Flags().IntVar(&autoRefreshSeconds, "auto-refresh", defaultDashboardRefreshSeconds, "refresh live quota for all saved accounts every N seconds; 0 disables automatic refresh")
 	return command
 }
 
 func runTUI(command *cobra.Command, dependencies *dependencies, stay bool) error {
-	return runTUIWithOptions(command, dependencies, stay, 20, 0)
+	return runTUIWithOptions(command, dependencies, stay, 20, defaultDashboardRefreshSeconds)
 }
 
 func runTUIWithOptions(command *cobra.Command, dependencies *dependencies, stay bool, autoThreshold, autoRefreshSeconds int) error {
-	return tui.Run(command.Context(), dashboardBackend{dependencies: dependencies}, tui.Options{
+	return tui.RunDashboard(command.Context(), dashboardBackend{dependencies: dependencies}, tui.Options{
 		Version:         resolvedVersion(),
 		AutoThreshold:   autoThreshold,
 		AutoRefresh:     time.Duration(autoRefreshSeconds) * time.Second,

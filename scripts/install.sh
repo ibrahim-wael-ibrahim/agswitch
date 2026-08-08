@@ -7,7 +7,11 @@ VERSION="${AGSWITCH_VERSION:-latest}"
 REF="${AGSWITCH_REF:-master}"
 BUILD_FROM_SOURCE="${AGSWITCH_BUILD_FROM_SOURCE:-false}"
 BINDIR="${BINDIR:-$HOME/.local/bin}"
-ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd || true)"
+SCRIPT_PATH="${BASH_SOURCE[0]-}"
+ROOT=""
+if [[ -n "$SCRIPT_PATH" && -f "$SCRIPT_PATH" ]]; then
+  ROOT="$(cd -- "$(dirname -- "$SCRIPT_PATH")/.." 2>/dev/null && pwd || true)"
+fi
 TMP="$(mktemp -d 2>/dev/null || mktemp -d -t agswitch)"
 SOURCE=""
 trap 'rm -rf "$TMP"' EXIT
@@ -109,7 +113,7 @@ install_release() {
 }
 
 prepare_source() {
-  if [[ -f "$ROOT/go.mod" ]]; then
+  if [[ -n "$ROOT" && -f "$ROOT/go.mod" ]]; then
     SOURCE="$ROOT"
     return 0
   fi
@@ -119,14 +123,37 @@ prepare_source() {
   git clone --depth 1 --branch "$REF" "https://github.com/$REPO.git" "$SOURCE"
 }
 
+source_version() {
+  local tag sha release_version
+  tag="$(cd "$SOURCE" && git describe --tags --exact-match 2>/dev/null || true)"
+  if [[ -n "$tag" ]]; then
+    printf '%s' "$tag"
+    return 0
+  fi
+  if [[ "$REF" == master && -f "$SOURCE/VERSION" ]]; then
+    release_version="$(tr -d '[:space:]' < "$SOURCE/VERSION")"
+    if [[ -n "$release_version" ]]; then
+      printf '%s' "$release_version"
+      return 0
+    fi
+  fi
+  sha="$(cd "$SOURCE" && git rev-parse --short=8 HEAD 2>/dev/null || true)"
+  if [[ -n "$sha" ]]; then
+    printf 'v0.0.0-dev+%s' "$sha"
+  else
+    printf 'dev'
+  fi
+}
+
 build_from_source() {
   [[ "$OS" == linux ]] && install_linux_dependencies || install_windows_dependencies
   has go || die "Go is required but was not found after dependency installation"
   prepare_source
-  local output="$TMP/agswitch"
+  local output="$TMP/agswitch" build_version
   [[ "$OS" == windows ]] && output="$TMP/agswitch.exe"
-  log "Building AGSwitch from source ref $REF"
-  (cd "$SOURCE" && go build -trimpath -ldflags "-s -w" -o "$output" .)
+  build_version="$(source_version)"
+  log "Building AGSwitch $build_version from source ref $REF"
+  (cd "$SOURCE" && go build -trimpath -ldflags "-s -w -X github.com/ibrahim-wael/agswitch/cmd.version=$build_version" -o "$output" .)
   atomic_install "$output"
 }
 

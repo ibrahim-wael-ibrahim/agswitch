@@ -9,7 +9,6 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -283,42 +282,14 @@ func (p *GoogleProvider) refreshAccessToken(ctx context.Context, auth AuthMateri
 	if strings.TrimSpace(auth.ClientID) == "" {
 		return "", errors.New("access token refresh requires client_id in the credential or AGSWITCH_OAUTH_CLIENT_ID")
 	}
-	values := url.Values{
-		"client_id":     {auth.ClientID},
-		"refresh_token": {auth.RefreshToken},
-		"grant_type":    {"refresh_token"},
+	token, failure, err := p.refreshForDiagnostic(ctx, auth)
+	if err == nil {
+		return token, nil
 	}
-	if strings.TrimSpace(auth.ClientSecret) != "" {
-		values.Set("client_secret", auth.ClientSecret)
+	if failure != nil {
+		return "", errors.New(failure.Error())
 	}
-	tokenURL := p.TokenURL
-	if tokenURL == "" {
-		tokenURL = defaultTokenURL
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(values.Encode()))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	response, err := p.httpClient().Do(req)
-	if err != nil {
-		return "", fmt.Errorf("refresh access token: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64<<10))
-		return "", fmt.Errorf("refresh access token: HTTP %d", response.StatusCode)
-	}
-	var output struct {
-		AccessToken string `json:"access_token"`
-	}
-	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&output); err != nil {
-		return "", fmt.Errorf("decode refreshed access token: %w", err)
-	}
-	if strings.TrimSpace(output.AccessToken) == "" {
-		return "", errors.New("token refresh returned an empty access token")
-	}
-	return strings.TrimSpace(output.AccessToken), nil
+	return "", fmt.Errorf("refresh access token: %w", err)
 }
 
 func (p *GoogleProvider) httpClient() HTTPDoer {

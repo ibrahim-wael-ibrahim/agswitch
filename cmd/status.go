@@ -5,22 +5,48 @@ import (
 	"fmt"
 	"runtime"
 	"runtime/debug"
+	"strings"
 
 	"github.com/ibrahim-wael/agswitch/internal/brand"
 	"github.com/ibrahim-wael/agswitch/internal/switcher"
 	"github.com/spf13/cobra"
 )
 
-var version = "v1.0.0"
+// version is overridden by release/source-build ldflags. Keep it at dev so a
+// plain `go build` never pretends to be a tagged release.
+var version = "dev"
 
 func resolvedVersion() string {
-	resolved := version
-	if resolved == "dev" {
-		if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
-			resolved = info.Main.Version
+	if explicit := strings.TrimSpace(version); explicit != "" && explicit != "dev" {
+		return explicit
+	}
+
+	if info, ok := debug.ReadBuildInfo(); ok {
+		if info.Main.Version != "" && info.Main.Version != "(devel)" {
+			return info.Main.Version
+		}
+		var revision string
+		var dirty bool
+		for _, setting := range info.Settings {
+			switch setting.Key {
+			case "vcs.revision":
+				revision = strings.TrimSpace(setting.Value)
+			case "vcs.modified":
+				dirty = setting.Value == "true"
+			}
+		}
+		if revision != "" {
+			if len(revision) > 8 {
+				revision = revision[:8]
+			}
+			resolved := "v0.0.0-dev+" + revision
+			if dirty {
+				resolved += ".dirty"
+			}
+			return resolved
 		}
 	}
-	return resolved
+	return "dev"
 }
 
 func newStatusCommand(dependencies *dependencies) *cobra.Command {
