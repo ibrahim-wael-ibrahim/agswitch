@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -18,7 +19,8 @@ const dashboardWidthSafety = 3
 // can evolve independently.
 type dashboardModel struct {
 	Model
-	ShowModels bool
+	ShowModels    bool
+	ShowAllModels bool
 }
 
 func newDashboardModel(model Model) dashboardModel {
@@ -54,10 +56,20 @@ func (m dashboardModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		switch key.String() {
 		case "m":
 			m.ShowModels = !m.ShowModels
+			m.ShowAllModels = false
 			if m.ShowModels {
-				m.Status = "Model details shown"
+				m.Status = "Model summary shown"
 			} else {
 				m.Status = "Model details hidden"
+			}
+			return m, nil
+		case "M":
+			m.ShowModels = true
+			m.ShowAllModels = !m.ShowAllModels
+			if m.ShowAllModels {
+				m.Status = "All model rows shown"
+			} else {
+				m.Status = "Model summary shown"
 			}
 			return m, nil
 		case "r":
@@ -96,9 +108,14 @@ func (m dashboardModel) View() tea.View {
 	theme := currentTheme()
 
 	if m.confirming() {
+		confirmWidth := min(width, 96)
+		confirmation := renderConfirmationPanelWithTheme(m.Model, confirmWidth, 10, theme)
+		if confirmWidth < width {
+			confirmation = lipgloss.PlaceHorizontal(width, lipgloss.Center, confirmation)
+		}
 		parts := []string{
 			renderFriendlyHeader(width, m.Model, theme),
-			renderConfirmationPanelWithTheme(m.Model, width, min(max(9, height-8), 13), theme),
+			confirmation,
 			renderFriendlyHelp(width, m, theme),
 		}
 		view := tea.NewView(strings.Join(parts, "\n"))
@@ -131,7 +148,7 @@ func (m dashboardModel) View() tea.View {
 	parts := []string{header, body}
 	if m.ShowModels && height >= 25 {
 		modelHeight := max(7, min(14, height-lipgloss.Height(header)-lipgloss.Height(body)-3))
-		parts = append(parts, renderCompactModels(m.Model, width, modelHeight, theme))
+		parts = append(parts, renderModelsPanel(m, width, modelHeight, theme))
 	}
 	parts = append(parts, footer)
 
@@ -232,9 +249,6 @@ func renderFriendlyAccountRow(profile string, active bool, result quota.Result, 
 		}
 	}
 
-	// Leave a small terminal-width safety margin. Some glyph/font combinations
-	// render one cell wider than Lip Gloss reports; filling a row to the exact
-	// border width caused the last reset fragment to wrap on real terminals.
 	rowWidth = max(12, rowWidth-dashboardWidthSafety)
 	leftWidth := max(8, rowWidth-visibleWidth(rightPlain)-4)
 	name := trimWidth(profile, leftWidth)
@@ -245,8 +259,6 @@ func renderFriendlyAccountRow(profile string, active bool, result quota.Result, 
 }
 
 func dashboardContentWidth(outerWidth int) int {
-	// renderBoxWithTheme adds a rounded border and horizontal padding. Reserve a
-	// few extra cells so terminal-specific glyph widths never force hard wraps.
 	return max(12, outerWidth-9)
 }
 
@@ -304,7 +316,7 @@ func renderAccountHealth(m Model, width, height int, theme tuiTheme) string {
 	if live && windows.Weekly.Available {
 		lines = append(lines, renderWindowBlock("WEEKLY", windows.Weekly, now, contentWidth, theme))
 	} else {
-		lines = appendStyledWrapped(lines, "WEEKLY  provider did not expose a separate long reset window", contentWidth, theme.style(theme.Muted))
+		lines = appendStyledWrapped(lines, "WEEKLY provider did not expose a separate long reset window", contentWidth, theme.style(theme.Muted))
 	}
 
 	if !live {
@@ -322,7 +334,7 @@ func renderAccountHealth(m Model, width, height int, theme tuiTheme) string {
 		}
 	}
 
-	lines = append(lines, "", theme.style(theme.Muted).Render(trimWidth("Enter/s switch · r refresh · a auto · m models", contentWidth)))
+	lines = append(lines, "", theme.style(theme.Muted).Render(trimWidth("Enter/s switch · r refresh · a auto · m summary · M all", contentWidth)))
 	return renderBoxWithTheme("Selected account", strings.Join(lines, "\n"), width, height, false, theme)
 }
 
@@ -437,17 +449,104 @@ func renderWindowBlock(label string, window quota.WindowSummary, now time.Time, 
 	return theme.style(theme.Muted).Bold(true).Render(label+"  ") + bar + " " + value + "\n" + theme.style(theme.Muted).Render("       "+reset)
 }
 
-func renderCompactModels(m Model, width, height int, theme tuiTheme) string {
+type modelGroup struct {
+	Remaining int
+	Reset     string
+	Count     int
+	Names     []string
+}
+
+func renderModelsPanel(m dashboardModel, width, height int, theme tuiTheme) string {
 	profile, ok := m.selectedProfile()
 	if !ok {
 		return ""
 	}
 	result := m.resultFor(profile)
+	live, state := dashboardQuotaStatus(result, time.Now().UTC())
 	allModels := quota.SortedModels(result.Snapshot)
 	if len(allModels) == 0 {
-		return renderBoxWithTheme("Model details", theme.style(theme.Muted).Render("No model quota returned."), width, height, false, theme)
+		return renderBoxWithTheme("Models", theme.style(theme.Muted).Render("No model quota returned."), width, height, false, theme)
 	}
 
+	if !live && !m.ShowAllModels {
+		age := "unknown age"
+		if !result.Snapshot.FetchedAt.IsZero() {
+			age = compactAge(maxDuration(0, time.Since(result.Snapshot.FetchedAt))) + " old"
+		}
+		lines := []string{
+			theme.style(theme.Warning).Bold(true).Render("Cached model snapshot · display only"),
+			theme.style(theme.Muted).Render(fmt.Sprintf("%s · %d cached model rows · %s", state, len(allModels), age)),
+			theme.style(theme.Muted).Render("Live percentages are hidden because this profile is not authenticated."),
+			theme.style(theme.Info).Render("Press M to inspect the cached rows explicitly."),
+		}
+		return renderBoxWithTheme("Models · cached", strings.Join(lines, "\n"), width, min(height, 7), false, theme)
+	}
+
+	if !m.ShowAllModels {
+		return renderModelSummary(result, allModels, width, height, theme)
+	}
+	return renderAllModelRows(result, allModels, width, height, live, theme)
+}
+
+func renderModelSummary(result quota.Result, models []quota.ModelUsage, width, height int, theme tuiTheme) string {
+	now := time.Now()
+	groups := make(map[string]*modelGroup)
+	for _, model := range models {
+		remaining := model.Remaining
+		reset := "—"
+		if d := quota.ResetIn(model.ResetAt, now); d > 0 {
+			reset = compactResetDuration(d)
+		}
+		key := fmt.Sprintf("%d|%s", remaining, reset)
+		group := groups[key]
+		if group == nil {
+			group = &modelGroup{Remaining: remaining, Reset: reset}
+			groups[key] = group
+		}
+		group.Count++
+		if len(group.Names) < 3 {
+			group.Names = append(group.Names, model.Name)
+		}
+	}
+
+	ordered := make([]*modelGroup, 0, len(groups))
+	for _, group := range groups {
+		ordered = append(ordered, group)
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].Remaining < 0 && ordered[j].Remaining >= 0 {
+			return false
+		}
+		if ordered[j].Remaining < 0 && ordered[i].Remaining >= 0 {
+			return true
+		}
+		if ordered[i].Remaining != ordered[j].Remaining {
+			return ordered[i].Remaining < ordered[j].Remaining
+		}
+		return ordered[i].Reset < ordered[j].Reset
+	})
+
+	contentWidth := dashboardContentWidth(width)
+	lines := make([]string, 0, len(ordered)+1)
+	for _, group := range ordered {
+		value := "—"
+		if group.Remaining >= 0 {
+			value = fmt.Sprintf("%d%%", group.Remaining)
+		}
+		preview := strings.Join(group.Names, ", ")
+		if group.Count > len(group.Names) {
+			preview += fmt.Sprintf(" +%d", group.Count-len(group.Names))
+		}
+		right := fmt.Sprintf("%s  %s  ×%d", value, group.Reset, group.Count)
+		leftWidth := max(10, contentWidth-visibleWidth(right)-3)
+		lines = append(lines, padRight(trimWidth(preview, leftWidth), leftWidth)+"   "+right)
+	}
+
+	title := fmt.Sprintf("Model summary · %d models · %d groups · M all", len(models), len(ordered))
+	return renderBoxWithTheme(title, strings.Join(lines, "\n"), width, min(height, max(6, len(lines)+2)), false, theme)
+}
+
+func renderAllModelRows(result quota.Result, allModels []quota.ModelUsage, width, height int, live bool, theme tuiTheme) string {
 	contentWidth := dashboardContentWidth(width)
 	rowsAvailable := max(1, height-4)
 	columns := 1
@@ -464,7 +563,7 @@ func renderCompactModels(m Model, width, height int, theme tuiTheme) string {
 	}
 	entries := make([]string, 0, len(models))
 	for _, model := range models {
-		entries = append(entries, renderModelCell(model, cellWidth, time.Now()))
+		entries = append(entries, renderModelCell(model, cellWidth, time.Now(), live))
 	}
 
 	var body string
@@ -484,27 +583,29 @@ func renderCompactModels(m Model, width, height int, theme tuiTheme) string {
 		body = strings.Join(lines, "\n")
 	}
 
-	minText := "min unknown"
-	if remaining, ok := quota.MinimumKnownRemaining(result.Snapshot); ok {
-		minText = fmt.Sprintf("min %d%%", remaining)
+	mode := "LIVE"
+	if !live {
+		mode = "CACHED / DISPLAY ONLY"
 	}
-	windows := quota.SummarizeWindows(result.Snapshot, time.Now().UTC())
-	resetText := "reset unknown"
-	if windows.FiveHour.Available && !windows.FiveHour.ResetAt.IsZero() {
-		resetText = "5h reset " + compactResetDuration(maxDuration(0, windows.FiveHour.ResetAt.Sub(time.Now().UTC())))
-	}
-	title := fmt.Sprintf("Models · %d/%d · %s · %s · m hide", shown, len(allModels), minText, resetText)
+	title := fmt.Sprintf("All models · %s · %d/%d · M summary", mode, shown, len(allModels))
 	return renderBoxWithTheme(title, body, width, height, false, theme)
 }
 
-func renderModelCell(model quota.ModelUsage, width int, now time.Time) string {
+func renderModelCell(model quota.ModelUsage, width int, now time.Time, showValues bool) string {
 	remaining := "—"
-	if model.Remaining >= 0 {
-		remaining = fmt.Sprintf("%d%%", model.Remaining)
-	}
 	reset := "—"
-	if d := quota.ResetIn(model.ResetAt, now); d > 0 {
-		reset = compactResetDuration(d)
+	if showValues {
+		if model.Remaining >= 0 {
+			remaining = fmt.Sprintf("%d%%", model.Remaining)
+		}
+		if d := quota.ResetIn(model.ResetAt, now); d > 0 {
+			reset = compactResetDuration(d)
+		}
+	} else {
+		remaining = "cached"
+		if d := quota.ResetIn(model.ResetAt, now); d > 0 {
+			reset = compactResetDuration(d)
+		}
 	}
 	right := remaining + "  " + reset
 	nameWidth := max(7, width-visibleWidth(right)-2)
@@ -536,7 +637,7 @@ func compactAge(value time.Duration) string {
 }
 
 func renderFriendlyHelp(width int, m dashboardModel, theme tuiTheme) string {
-	text := "↑/↓ account  Enter actions  s hot-switch  r refresh  a auto  / search  m models  Tab panels  q quit"
+	text := "↑/↓ account  Enter/s switch  f restart  u sync  o activate  r refresh  a auto  / search  m summary  M all  q quit"
 	if m.confirming() {
 		text = "Enter / Y confirm · Esc / N cancel · q quit"
 	} else if m.EditingRefresh {
