@@ -6,9 +6,7 @@ import (
 )
 
 func TestParseOAuthFailure(t *testing.T) {
-	body := []byte(`{"error":"invalid_grant"}`)
-	_ = body
-	body = []byte("{\"error\":\"invalid_grant\",\"error_description\":\"Token has been expired or revoked.\",\"error_subtype\":\"invalid_rapt\"}")
+	body := []byte("{\"error\":\"invalid_grant\",\"error_description\":\"Token has been expired or revoked.\",\"error_subtype\":\"invalid_rapt\"}")
 	failure := parseOAuthFailure(400, body)
 	if failure.Status != 400 {
 		t.Fatalf("status = %d", failure.Status)
